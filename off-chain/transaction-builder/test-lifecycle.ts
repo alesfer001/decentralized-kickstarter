@@ -1,0 +1,247 @@
+/**
+ * Integration test for the full campaign lifecycle
+ * Tests: create -> pledge -> finalize -> release/refund
+ *
+ * Run with: npx ts-node test-lifecycle.ts
+ */
+
+import { ccc } from "@ckb-ccc/core";
+import { TransactionBuilder } from "./src";
+import type { ContractInfo } from "./src/types";
+import { CampaignStatus } from "./src/types";
+import { createDevnetClient } from "./src/devnetClient";
+
+// Updated contract info from Phase 8 deployment
+const campaignContract: ContractInfo = {
+  codeHash: "0x0f5667918b120ccdd5e236b43a724ca5edbef52299b19390d4ce703959667e10",
+  hashType: "data2",
+  txHash: "0x78a09aa811982bc6c7800bb5cba7036d1d2582dc97fa5e82e6177691891e0150",
+  index: 0,
+};
+
+const pledgeContract: ContractInfo = {
+  codeHash: "0x27182bbbe47d80cce33169d4b791d80a654cf9947cb4172783e444005f098065",
+  hashType: "data2",
+  txHash: "0x179497fc7a4792a50f2f0636bc16d41d6473217485b5bc453dc00c5d98e09fcb",
+  index: 0,
+};
+
+const rpcUrl = "http://127.0.0.1:8114";
+
+// Devnet test accounts
+const creatorKey = "0x6109170b275a09ad54877b82f7d9930f88cab5717d484fb4741ae9d1dd078cd6";
+const backerKey = "0x9f315d5a9618a39fdc487c7a67a8581d40b045bd7a42d83648ca80ef3b2cb4a1";
+const creatorAddress = "ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqvwg2cen8extgq8s5puft8vf40px3f599cytcyd8";
+
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForTx(client: ccc.Client, txHash: string, timeout = 60000): Promise<void> {
+  console.log(`  Waiting for tx ${txHash.slice(0, 18)}... to confirm`);
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      const tx = await client.getTransaction(txHash);
+      if (tx && tx.status === "committed") {
+        console.log("  Confirmed!");
+        return;
+      }
+    } catch {}
+    await sleep(3000);
+  }
+  throw new Error(`Transaction ${txHash} not confirmed after ${timeout}ms`);
+}
+
+async function getCurrentBlock(client: ccc.Client): Promise<bigint> {
+  const tip = await client.getTip();
+  return BigInt(tip);
+}
+
+/**
+ * Test 1: Success lifecycle
+ * Create campaign -> Pledge enough -> Finalize as Success -> Release to creator
+ */
+async function testSuccessLifecycle() {
+  console.log("\n=== TEST 1: Success Lifecycle ===\n");
+
+  const client = createDevnetClient(rpcUrl);
+  const builder = new TransactionBuilder(client, campaignContract, pledgeContract);
+
+  const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
+  const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
+
+  const creatorAddr = await creatorSigner.getRecommendedAddress();
+  const creatorLockHash = (await ccc.Address.fromString(creatorAddr, client)).script.hash();
+
+  const backerAddr = await backerSigner.getRecommendedAddress();
+  const backerLockHash = (await ccc.Address.fromString(backerAddr, client)).script.hash();
+
+  // Step 1: Create campaign with a deadline close to current block
+  const currentBlock = await getCurrentBlock(client);
+  const deadline = currentBlock + BigInt(5); // expires in ~5 blocks
+  const fundingGoal = BigInt(100 * 100000000); // 100 CKB
+
+  console.log(`1. Creating campaign (goal: 100 CKB, deadline: block ${deadline})`);
+  const campaignTxHash = await builder.createCampaign(creatorSigner, {
+    creatorLockHash,
+    fundingGoal,
+    deadlineBlock: deadline,
+  });
+  console.log(`   Campaign TX: ${campaignTxHash}`);
+  await waitForTx(client, campaignTxHash);
+
+  // Step 2: Backer pledges enough to meet goal
+  console.log("\n2. Backer pledges 150 CKB (exceeds 100 CKB goal)");
+  const pledgeTxHash = await builder.createPledge(backerSigner, {
+    campaignId: campaignTxHash,
+    backerLockHash,
+    amount: BigInt(150 * 100000000), // 150 CKB
+  });
+  console.log(`   Pledge TX: ${pledgeTxHash}`);
+  await waitForTx(client, pledgeTxHash);
+
+  // Step 3: Wait for deadline to pass
+  console.log("\n3. Waiting for deadline to pass...");
+  let block = await getCurrentBlock(client);
+  while (block <= deadline) {
+    await sleep(3000);
+    block = await getCurrentBlock(client);
+    console.log(`   Current block: ${block}, deadline: ${deadline}`);
+  }
+  console.log("   Deadline passed!");
+
+  // Step 4: Creator finalizes as Success
+  console.log("\n4. Creator finalizes campaign as Success");
+  const finalizeTxHash = await builder.finalizeCampaign(creatorSigner, {
+    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
+    campaignData: {
+      creatorLockHash,
+      fundingGoal,
+      deadlineBlock: deadline,
+      totalPledged: BigInt(0), // On-chain totalPledged is 0 (it's tracked off-chain via pledges)
+    },
+    newStatus: CampaignStatus.Success,
+  });
+  console.log(`   Finalize TX: ${finalizeTxHash}`);
+  await waitForTx(client, finalizeTxHash);
+
+  // Step 5: Backer releases pledge to creator
+  console.log("\n5. Backer releases pledge to creator");
+  // Get the pledge cell's capacity (we need to look it up or calculate it)
+  const pledgeDataSize = 72;
+  const baseCapacity = BigInt(Math.ceil((8 + pledgeDataSize + 65 + 65) * 1.2)) * BigInt(100000000);
+  const pledgeCapacity = baseCapacity + BigInt(150 * 100000000);
+
+  const releaseTxHash = await builder.releasePledgeToCreator(backerSigner, {
+    pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
+    pledgeCapacity,
+    creatorAddress,
+  });
+  console.log(`   Release TX: ${releaseTxHash}`);
+  await waitForTx(client, releaseTxHash);
+
+  console.log("\n   SUCCESS: Full success lifecycle completed!");
+}
+
+/**
+ * Test 2: Failure lifecycle
+ * Create campaign -> Pledge insufficient -> Finalize as Failed -> Refund
+ */
+async function testFailureLifecycle() {
+  console.log("\n=== TEST 2: Failure Lifecycle ===\n");
+
+  const client = createDevnetClient(rpcUrl);
+  const builder = new TransactionBuilder(client, campaignContract, pledgeContract);
+
+  const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
+  const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
+
+  const creatorAddr = await creatorSigner.getRecommendedAddress();
+  const creatorLockHash = (await ccc.Address.fromString(creatorAddr, client)).script.hash();
+
+  const backerAddr = await backerSigner.getRecommendedAddress();
+  const backerLockHash = (await ccc.Address.fromString(backerAddr, client)).script.hash();
+
+  // Step 1: Create campaign
+  const currentBlock = await getCurrentBlock(client);
+  const deadline = currentBlock + BigInt(5);
+  const fundingGoal = BigInt(1000 * 100000000); // 1000 CKB
+
+  console.log(`1. Creating campaign (goal: 1000 CKB, deadline: block ${deadline})`);
+  const campaignTxHash = await builder.createCampaign(creatorSigner, {
+    creatorLockHash,
+    fundingGoal,
+    deadlineBlock: deadline,
+  });
+  console.log(`   Campaign TX: ${campaignTxHash}`);
+  await waitForTx(client, campaignTxHash);
+
+  // Step 2: Backer pledges insufficient amount
+  console.log("\n2. Backer pledges 50 CKB (below 1000 CKB goal)");
+  const pledgeTxHash = await builder.createPledge(backerSigner, {
+    campaignId: campaignTxHash,
+    backerLockHash,
+    amount: BigInt(50 * 100000000), // 50 CKB — far below 1000 CKB goal
+  });
+  console.log(`   Pledge TX: ${pledgeTxHash}`);
+  await waitForTx(client, pledgeTxHash);
+
+  // Step 3: Wait for deadline
+  console.log("\n3. Waiting for deadline to pass...");
+  let block = await getCurrentBlock(client);
+  while (block <= deadline) {
+    await sleep(3000);
+    block = await getCurrentBlock(client);
+    console.log(`   Current block: ${block}, deadline: ${deadline}`);
+  }
+  console.log("   Deadline passed!");
+
+  // Step 4: Creator finalizes as Failed
+  console.log("\n4. Creator finalizes campaign as Failed");
+  const finalizeTxHash = await builder.finalizeCampaign(creatorSigner, {
+    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
+    campaignData: {
+      creatorLockHash,
+      fundingGoal,
+      deadlineBlock: deadline,
+      totalPledged: BigInt(0), // On-chain totalPledged is 0
+    },
+    newStatus: CampaignStatus.Failed,
+  });
+  console.log(`   Finalize TX: ${finalizeTxHash}`);
+  await waitForTx(client, finalizeTxHash);
+
+  // Step 5: Backer claims refund
+  console.log("\n5. Backer claims refund");
+  const pledgeDataSize = 72;
+  const baseCapacity = BigInt(Math.ceil((8 + pledgeDataSize + 65 + 65) * 1.2)) * BigInt(100000000);
+  const pledgeCapacity = baseCapacity + BigInt(50 * 100000000);
+
+  const refundTxHash = await builder.refundPledge(backerSigner, {
+    pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
+    pledgeCapacity,
+  });
+  console.log(`   Refund TX: ${refundTxHash}`);
+  await waitForTx(client, refundTxHash);
+
+  console.log("\n   SUCCESS: Full failure lifecycle completed!");
+}
+
+async function main() {
+  console.log("=== CKB Kickstarter Lifecycle Integration Tests ===");
+  console.log(`RPC: ${rpcUrl}`);
+  console.log(`Campaign contract: ${campaignContract.codeHash}`);
+  console.log(`Pledge contract: ${pledgeContract.codeHash}`);
+
+  try {
+    await testSuccessLifecycle();
+    await testFailureLifecycle();
+    console.log("\n\n=== ALL TESTS PASSED ===");
+  } catch (error) {
+    console.error("\n\nTEST FAILED:", error);
+    process.exit(1);
+  }
+}
+
+main().catch(console.error);

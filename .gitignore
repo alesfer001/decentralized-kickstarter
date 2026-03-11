@@ -1,0 +1,41 @@
+# Rust
+target/
+Cargo.lock
+*.rs.bk
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnpm-debug.log
+dist/
+build/
+
+# Environment
+.env
+.env.local
+
+# Documentation (tracked separately)
+docs/
+
+# Claude Code
+.claude/
+
+# Deployment artifacts (environment-specific)
+deployment/
+
+# E2E test scenarios
+e2e/
+
+# Indexer SQLite data
+off-chain/indexer/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
