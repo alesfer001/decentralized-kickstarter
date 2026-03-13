@@ -7,6 +7,9 @@ export interface DBCampaign {
   tx_hash: string;
   output_index: number;
   creator_lock_hash: string;
+  creator_lock_code_hash: string | null;
+  creator_lock_hash_type: string | null;
+  creator_lock_args: string | null;
   funding_goal: string;
   deadline_block: string;
   total_pledged: string;
@@ -43,6 +46,7 @@ export class Database {
     this.db = new BetterSqlite3(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.createSchema();
+    this.migrate();
   }
 
   private createSchema() {
@@ -52,6 +56,9 @@ export class Database {
         tx_hash TEXT NOT NULL,
         output_index INTEGER NOT NULL,
         creator_lock_hash TEXT NOT NULL,
+        creator_lock_code_hash TEXT,
+        creator_lock_hash_type TEXT,
+        creator_lock_args TEXT,
         funding_goal TEXT NOT NULL,
         deadline_block TEXT NOT NULL,
         total_pledged TEXT NOT NULL,
@@ -80,13 +87,28 @@ export class Database {
   }
 
   /**
+   * Run schema migrations for existing databases.
+   */
+  private migrate() {
+    // Add creator lock script columns if they don't exist (added in Phase 13)
+    const columns = this.db.prepare("PRAGMA table_info(campaigns)").all() as { name: string }[];
+    const columnNames = new Set(columns.map((c) => c.name));
+
+    if (!columnNames.has("creator_lock_code_hash")) {
+      this.db.exec("ALTER TABLE campaigns ADD COLUMN creator_lock_code_hash TEXT");
+      this.db.exec("ALTER TABLE campaigns ADD COLUMN creator_lock_hash_type TEXT");
+      this.db.exec("ALTER TABLE campaigns ADD COLUMN creator_lock_args TEXT");
+    }
+  }
+
+  /**
    * Replace all live cells atomically (matches the clear+rebuild pattern).
    * Deletes all existing rows and inserts the new set in a single transaction.
    */
   replaceLiveCells(campaigns: DBCampaign[], pledges: DBPledge[]) {
     const insertCampaign = this.db.prepare(`
-      INSERT INTO campaigns (id, tx_hash, output_index, creator_lock_hash, funding_goal, deadline_block, total_pledged, status, title, description, created_at, original_tx_hash)
-      VALUES (@id, @tx_hash, @output_index, @creator_lock_hash, @funding_goal, @deadline_block, @total_pledged, @status, @title, @description, @created_at, @original_tx_hash)
+      INSERT INTO campaigns (id, tx_hash, output_index, creator_lock_hash, creator_lock_code_hash, creator_lock_hash_type, creator_lock_args, funding_goal, deadline_block, total_pledged, status, title, description, created_at, original_tx_hash)
+      VALUES (@id, @tx_hash, @output_index, @creator_lock_hash, @creator_lock_code_hash, @creator_lock_hash_type, @creator_lock_args, @funding_goal, @deadline_block, @total_pledged, @status, @title, @description, @created_at, @original_tx_hash)
     `);
 
     const insertPledge = this.db.prepare(`

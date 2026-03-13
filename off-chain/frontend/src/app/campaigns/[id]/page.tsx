@@ -17,7 +17,7 @@ import {
   blockToRelativeTime,
   getUniqueBackerCount,
 } from "@/lib/utils";
-import { CONTRACTS, PLEDGE_DATA_SIZE, DEVNET_ACCOUNTS } from "@/lib/constants";
+import { CONTRACTS, PLEDGE_DATA_SIZE, DEVNET_ACCOUNTS, IS_DEVNET } from "@/lib/constants";
 import { u64ToHexLE, serializeMetadataHex } from "@/lib/serialization";
 import { useDevnet } from "@/components/DevnetContext";
 import { useToast } from "@/components/Toast";
@@ -424,8 +424,7 @@ export default function CampaignDetailPage() {
     setActionTxHash(null);
 
     try {
-      const client = signer.client;
-      const creatorLockScript = await getCreatorLockScript(campaign.creator, client);
+      const creatorLockScript = await resolveCreatorLockScript(campaign, signer.client);
 
       const [txHash, indexStr] = pledge.pledgeId.split("_");
 
@@ -1035,25 +1034,39 @@ export default function CampaignDetailPage() {
   );
 }
 
-// Get creator lock args by matching lock hash against known devnet accounts
-async function getCreatorLockScript(
-  creatorLockHash: string,
+/**
+ * Resolve the creator's lock script for the "Release to Creator" transaction.
+ *
+ * 1. Use creatorLockScript from the indexer API (works on all networks).
+ * 2. Fallback: match lock hash against known devnet accounts (devnet only).
+ */
+async function resolveCreatorLockScript(
+  campaign: Campaign,
   client: any
-): Promise<{ codeHash: string; hashType: "type"; args: string }> {
-  for (const account of DEVNET_ACCOUNTS) {
-    try {
-      const addressObj = await ccc.Address.fromString(account.address, client);
-      const hash = addressObj.script.hash();
-      if (hash.toLowerCase() === creatorLockHash.toLowerCase()) {
-        return {
-          codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-          hashType: "type",
-          args: account.lockArg,
-        };
+): Promise<{ codeHash: string; hashType: string; args: string }> {
+  // Prefer the lock script provided by the indexer
+  if (campaign.creatorLockScript) {
+    return campaign.creatorLockScript;
+  }
+
+  // Devnet fallback: match against known test accounts
+  if (IS_DEVNET) {
+    for (const account of DEVNET_ACCOUNTS) {
+      try {
+        const addressObj = await ccc.Address.fromString(account.address, client);
+        const hash = addressObj.script.hash();
+        if (hash.toLowerCase() === campaign.creator.toLowerCase()) {
+          return {
+            codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+            hashType: "type",
+            args: account.lockArg,
+          };
+        }
+      } catch {
+        continue;
       }
-    } catch {
-      continue;
     }
   }
-  throw new Error("Creator not found in known devnet accounts. Cannot construct lock script.");
+
+  throw new Error("Cannot resolve creator lock script. The indexer may need to re-index.");
 }

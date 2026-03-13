@@ -1,7 +1,7 @@
 import { ccc } from "@ckb-ccc/core";
 import { CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams } from "./types";
 import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize } from "./serializer";
-import { createDevnetClient } from "./devnetClient";
+import { createCkbClient, NetworkType } from "./ckbClient";
 
 /**
  * Transaction builder for creating campaigns and pledges
@@ -397,20 +397,19 @@ export class TransactionBuilder {
  * @param rpcUrl - RPC URL for the CKB node
  * @param campaignContract - Campaign contract info
  * @param pledgeContract - Pledge contract info
- * @param isDevnet - Set to true when using OffCKB local devnet (default: true for localhost)
+ * @param network - Network type: "devnet" | "testnet" | "mainnet" (default: auto-detect from rpcUrl)
  */
 export function createTransactionBuilder(
   rpcUrl: string,
   campaignContract: ContractInfo,
   pledgeContract: ContractInfo,
-  isDevnet?: boolean
+  network?: NetworkType
 ): TransactionBuilder {
-  // Auto-detect devnet if not explicitly specified
-  const useDevnet = isDevnet ?? (rpcUrl.includes("127.0.0.1") || rpcUrl.includes("localhost"));
+  // Auto-detect network if not explicitly specified
+  const resolvedNetwork = network ?? (
+    (rpcUrl.includes("127.0.0.1") || rpcUrl.includes("localhost")) ? "devnet" : "testnet"
+  );
 
-  const client = useDevnet
-    ? createDevnetClient(rpcUrl)
-    : new ccc.ClientPublicTestnet({ url: rpcUrl });
-
+  const client = createCkbClient(resolvedNetwork, rpcUrl);
   return new TransactionBuilder(client, campaignContract, pledgeContract);
 }

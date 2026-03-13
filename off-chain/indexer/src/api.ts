@@ -45,6 +45,7 @@ export class IndexerAPI {
           return {
             campaignId: c.id,
             creator: c.creatorLockHash,
+            creatorLockScript: c.creatorLockScript || null,
             title: c.title,
             description: c.description,
             fundingGoal: c.fundingGoal.toString(),
@@ -82,6 +83,7 @@ export class IndexerAPI {
         const serialized = {
           campaignId: campaign.id,
           creator: campaign.creatorLockHash,
+          creatorLockScript: campaign.creatorLockScript || null,
           title: campaign.title,
           description: campaign.description,
           fundingGoal: campaign.fundingGoal.toString(),

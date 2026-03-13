@@ -9,20 +9,20 @@ import { ccc } from "@ckb-ccc/core";
 import { TransactionBuilder } from "./src";
 import type { ContractInfo } from "./src/types";
 import { CampaignStatus } from "./src/types";
-import { createDevnetClient } from "./src/devnetClient";
+import { createCkbClient } from "./src/ckbClient";
 
 // Updated contract info from Phase 8 deployment
 const campaignContract: ContractInfo = {
-  codeHash: "0x0f5667918b120ccdd5e236b43a724ca5edbef52299b19390d4ce703959667e10",
+  codeHash: "0xb71c1c0bc80ddc5a16ef041f2adf1f9a9339b56ecd63c135607e7e5ebb6ea3fc",
   hashType: "data2",
-  txHash: "0x78a09aa811982bc6c7800bb5cba7036d1d2582dc97fa5e82e6177691891e0150",
+  txHash: "0x8d501828096d4b70a2f032ee04672cf5a75f8771dd1fb2ea23de0ef1519d05d6",
   index: 0,
 };
 
 const pledgeContract: ContractInfo = {
-  codeHash: "0x27182bbbe47d80cce33169d4b791d80a654cf9947cb4172783e444005f098065",
+  codeHash: "0x423442d38b9e1fdfe68d0e878c4003317fe85408e202fd7de776205d289bc924",
   hashType: "data2",
-  txHash: "0x179497fc7a4792a50f2f0636bc16d41d6473217485b5bc453dc00c5d98e09fcb",
+  txHash: "0x304be042daf897898dcf1851e12ecabaa0400f677f0135fe9ec6c727fdc1a9e2",
   index: 0,
 };
 
@@ -65,7 +65,7 @@ async function getCurrentBlock(client: ccc.Client): Promise<bigint> {
 async function testSuccessLifecycle() {
   console.log("\n=== TEST 1: Success Lifecycle ===\n");
 
-  const client = createDevnetClient(rpcUrl);
+  const client = createCkbClient("devnet", rpcUrl);
   const builder = new TransactionBuilder(client, campaignContract, pledgeContract);
 
   const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
@@ -151,7 +151,7 @@ async function testSuccessLifecycle() {
 async function testFailureLifecycle() {
   console.log("\n=== TEST 2: Failure Lifecycle ===\n");
 
-  const client = createDevnetClient(rpcUrl);
+  const client = createCkbClient("devnet", rpcUrl);
   const builder = new TransactionBuilder(client, campaignContract, pledgeContract);
 
   const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);

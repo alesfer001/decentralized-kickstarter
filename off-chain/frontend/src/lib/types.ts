@@ -1,9 +1,16 @@
 /**
  * Campaign data from the indexer API
  */
+export interface CreatorLockScript {
+  codeHash: string;
+  hashType: string;
+  args: string;
+}
+
 export interface Campaign {
   campaignId: string;
   creator: string;
+  creatorLockScript?: CreatorLockScript | null;
   title?: string;
   description?: string;
   fundingGoal: string;

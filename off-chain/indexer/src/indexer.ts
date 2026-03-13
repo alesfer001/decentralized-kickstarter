@@ -111,11 +111,17 @@ export class CampaignIndexer {
           originalTxHash = await this.getOriginalTxHash(cell.outPoint.txHash);
         }
 
+        // Extract creator lock script from the cell's own lock (creator owns the campaign cell)
+        const lockScript = cell.cellOutput.lock;
+
         dbCampaigns.push({
           id: outPointStr,
           tx_hash: cell.outPoint.txHash,
           output_index: Number(cell.outPoint.index),
           creator_lock_hash: data.creatorLockHash,
+          creator_lock_code_hash: lockScript?.codeHash || null,
+          creator_lock_hash_type: lockScript?.hashType || null,
+          creator_lock_args: lockScript?.args || null,
           funding_goal: data.fundingGoal.toString(),
           deadline_block: data.deadlineBlock.toString(),
           total_pledged: data.totalPledged.toString(),
@@ -217,6 +223,13 @@ export class CampaignIndexer {
       description: row.description || undefined,
       createdAt: BigInt(row.created_at),
       originalTxHash: row.original_tx_hash || undefined,
+      creatorLockScript: row.creator_lock_code_hash
+        ? {
+            codeHash: row.creator_lock_code_hash,
+            hashType: row.creator_lock_hash_type!,
+            args: row.creator_lock_args!,
+          }
+        : undefined,
     };
   }
 

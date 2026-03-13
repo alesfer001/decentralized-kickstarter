@@ -8,10 +8,17 @@ import {
   ReactNode,
 } from "react";
 import { ccc } from "@ckb-ccc/connector-react";
-import { CKB_RPC_URL, DEVNET_ACCOUNTS, USE_DEVNET_MODE } from "@/lib/constants";
-import { createDevnetClient } from "@/lib/devnetClient";
+import {
+  CKB_RPC_URL,
+  DEVNET_ACCOUNTS,
+  IS_DEVNET,
+  NETWORK,
+  type NetworkType,
+} from "@/lib/constants";
+import { createCkbClient } from "@/lib/ckbClient";
 
 interface DevnetContextType {
+  network: NetworkType;
   isDevnet: boolean;
   devnetSigner: ccc.Signer | null;
   devnetAddress: string | null;
@@ -22,6 +29,7 @@ interface DevnetContextType {
 }
 
 const DevnetContext = createContext<DevnetContextType>({
+  network: NETWORK,
   isDevnet: false,
   devnetSigner: null,
   devnetAddress: null,
@@ -48,15 +56,21 @@ export function DevnetProvider({ children }: DevnetProviderProps) {
   );
 
   useEffect(() => {
-    if (!USE_DEVNET_MODE) return;
+    // Always create a client for the current network (needed for address parsing, etc.)
+    const ckbClient = createCkbClient(NETWORK, CKB_RPC_URL);
+    setClient(ckbClient);
+
+    // Only create a private-key signer on devnet
+    if (!IS_DEVNET) {
+      setDevnetSigner(null);
+      setDevnetAddress(null);
+      return;
+    }
 
     async function initDevnet() {
       try {
-        const devnetClient = createDevnetClient(CKB_RPC_URL);
-        setClient(devnetClient);
-
         const signer = new ccc.SignerCkbPrivateKey(
-          devnetClient,
+          ckbClient,
           DEVNET_ACCOUNTS[activeAccountIndex].privkey
         );
 
@@ -83,7 +97,8 @@ export function DevnetProvider({ children }: DevnetProviderProps) {
   return (
     <DevnetContext.Provider
       value={{
-        isDevnet: USE_DEVNET_MODE,
+        network: NETWORK,
+        isDevnet: IS_DEVNET,
         devnetSigner,
         devnetAddress,
         client,

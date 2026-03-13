@@ -29,12 +29,19 @@ export interface PledgeData {
 /**
  * Campaign with metadata
  */
+export interface CreatorLockScript {
+  codeHash: string;
+  hashType: string;
+  args: string;
+}
+
 export interface Campaign extends CampaignData {
   id: string; // cell out_point
   txHash: string;
   index: number;
   createdAt: bigint; // block number
   originalTxHash?: string; // For finalized campaigns: the original creation txHash (used for pledge linkage)
+  creatorLockScript?: CreatorLockScript; // Full lock script of the creator (for release-to-creator on testnet/mainnet)
 }
 
 /**

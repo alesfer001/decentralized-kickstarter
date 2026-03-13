@@ -1,6 +1,6 @@
 import { ccc } from "@ckb-ccc/core";
 import { TransactionBuilder } from "./src/builder";
-import { createDevnetClient } from "./src/devnetClient";
+import { createCkbClient } from "./src/ckbClient";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -27,7 +27,7 @@ async function main() {
   console.log(`- Pledge code hash: ${deployment.contracts.pledge.codeHash}\n`);
 
   // Create client configured for OffCKB devnet
-  const client = createDevnetClient(deployment.rpcUrl);
+  const client = createCkbClient("devnet", deployment.rpcUrl);
 
   // Create signer from OffCKB test account
   // OffCKB creates test accounts with pre-funded CKB

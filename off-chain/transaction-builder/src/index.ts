@@ -10,5 +10,7 @@
  */
 
 export { TransactionBuilder, createTransactionBuilder } from "./builder";
+export { createCkbClient } from "./ckbClient";
+export type { NetworkType } from "./ckbClient";
 export { serializeCampaignData, serializeCampaignDataWithStatus, serializePledgeData, calculateCellCapacity, serializeMetadata, getMetadataSize } from "./serializer";
 export type { CampaignParams, PledgeParams, ContractInfo, TxResult, CampaignStatus, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams } from "./types";

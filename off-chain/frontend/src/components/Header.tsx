@@ -6,10 +6,25 @@ import { ccc } from "@ckb-ccc/connector-react";
 import { formatHash, shannonsToCKB } from "@/lib/utils";
 import { useDevnet } from "./DevnetContext";
 
+const NETWORK_BADGE: Record<string, { label: string; classes: string }> = {
+  devnet: {
+    label: "Devnet",
+    classes: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+  },
+  testnet: {
+    label: "Testnet",
+    classes: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  },
+  mainnet: {
+    label: "Mainnet",
+    classes: "bg-green-500/20 text-green-400 border-green-500/30",
+  },
+};
+
 export function Header() {
   const { wallet, open, disconnect } = ccc.useCcc();
   const walletSigner = ccc.useSigner();
-  const { isDevnet, devnetSigner, devnetAddress, activeAccountIndex, switchAccount, accounts } = useDevnet();
+  const { network, isDevnet, devnetSigner, devnetAddress, activeAccountIndex, switchAccount, accounts } = useDevnet();
   const [address, setAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
 
@@ -54,6 +69,8 @@ export function Header() {
     return () => clearInterval(interval);
   }, [fetchBalance]);
 
+  const badge = NETWORK_BADGE[network];
+
   return (
     <header className="border-b border-zinc-200 dark:border-zinc-800">
       <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-2">
@@ -78,9 +95,9 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-4">
-          {isDevnet && (
-            <span className="px-2 py-1 text-xs font-medium rounded bg-orange-500/20 text-orange-400 border border-orange-500/30">
-              Devnet
+          {badge && (
+            <span className={`px-2 py-1 text-xs font-medium rounded border ${badge.classes}`}>
+              {badge.label}
             </span>
           )}
           {isConnected && address ? (

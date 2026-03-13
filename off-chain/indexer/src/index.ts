@@ -15,10 +15,10 @@ async function main() {
   // Contract code hashes from deployment
   const CAMPAIGN_CODE_HASH =
     process.env.CAMPAIGN_CODE_HASH ||
-    "0x0f5667918b120ccdd5e236b43a724ca5edbef52299b19390d4ce703959667e10";
+    "0xb71c1c0bc80ddc5a16ef041f2adf1f9a9339b56ecd63c135607e7e5ebb6ea3fc";
   const PLEDGE_CODE_HASH =
     process.env.PLEDGE_CODE_HASH ||
-    "0x27182bbbe47d80cce33169d4b791d80a654cf9947cb4172783e444005f098065";
+    "0x423442d38b9e1fdfe68d0e878c4003317fe85408e202fd7de776205d289bc924";
 
   console.log("Starting Campaign Indexer...");
   console.log(`RPC URL: ${RPC_URL}`);
