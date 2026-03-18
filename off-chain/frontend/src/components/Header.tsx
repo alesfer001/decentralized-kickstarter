@@ -6,6 +6,10 @@ import { ccc } from "@ckb-ccc/connector-react";
 import { formatHash, shannonsToCKB } from "@/lib/utils";
 import { useDevnet } from "./DevnetContext";
 
+// Tailwind safelist (ensures dynamic classes are not purged):
+// bg-orange-500/20 text-orange-400 border-orange-500/30
+// bg-blue-500/20 text-blue-400 border-blue-500/30
+// bg-green-500/20 text-green-400 border-green-500/30
 const NETWORK_BADGE: Record<string, { label: string; classes: string }> = {
   devnet: {
     label: "Devnet",

@@ -2,11 +2,22 @@ import { Campaign, Pledge } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+const defaultHeaders: HeadersInit = {
+  "ngrok-skip-browser-warning": "true",
+};
+
+function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: { ...defaultHeaders, ...init?.headers },
+  });
+}
+
 /**
  * Fetch all campaigns from the indexer
  */
 export async function fetchCampaigns(): Promise<Campaign[]> {
-  const res = await fetch(`${API_BASE}/campaigns`);
+  const res = await apiFetch(`${API_BASE}/campaigns`);
   if (!res.ok) {
     throw new Error(`Failed to fetch campaigns: ${res.statusText}`);
   }
@@ -17,7 +28,7 @@ export async function fetchCampaigns(): Promise<Campaign[]> {
  * Fetch a single campaign by ID
  */
 export async function fetchCampaign(id: string): Promise<Campaign | null> {
-  const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(id)}`);
+  const res = await apiFetch(`${API_BASE}/campaigns/${encodeURIComponent(id)}`);
   if (res.status === 404) {
     return null;
   }
@@ -31,7 +42,7 @@ export async function fetchCampaign(id: string): Promise<Campaign | null> {
  * Fetch pledges for a campaign
  */
 export async function fetchPledgesForCampaign(campaignId: string): Promise<Pledge[]> {
-  const res = await fetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/pledges`);
+  const res = await apiFetch(`${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/pledges`);
   if (!res.ok) {
     throw new Error(`Failed to fetch pledges: ${res.statusText}`);
   }
@@ -42,7 +53,7 @@ export async function fetchPledgesForCampaign(campaignId: string): Promise<Pledg
  * Fetch all pledges
  */
 export async function fetchPledges(): Promise<Pledge[]> {
-  const res = await fetch(`${API_BASE}/pledges`);
+  const res = await apiFetch(`${API_BASE}/pledges`);
   if (!res.ok) {
     throw new Error(`Failed to fetch pledges: ${res.statusText}`);
   }
@@ -53,7 +64,7 @@ export async function fetchPledges(): Promise<Pledge[]> {
  * Fetch pledges for a specific backer
  */
 export async function fetchBackerPledges(lockHash: string): Promise<Pledge[]> {
-  const res = await fetch(`${API_BASE}/pledges/backer/${encodeURIComponent(lockHash)}`);
+  const res = await apiFetch(`${API_BASE}/pledges/backer/${encodeURIComponent(lockHash)}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch backer pledges: ${res.statusText}`);
   }
@@ -64,7 +75,7 @@ export async function fetchBackerPledges(lockHash: string): Promise<Pledge[]> {
  * Fetch current block number
  */
 export async function fetchBlockNumber(): Promise<bigint> {
-  const res = await fetch(`${API_BASE}/tip`);
+  const res = await apiFetch(`${API_BASE}/tip`);
   if (!res.ok) {
     throw new Error(`Failed to fetch block number: ${res.statusText}`);
   }
@@ -77,7 +88,7 @@ export async function fetchBlockNumber(): Promise<bigint> {
  */
 export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/health`);
+    const res = await apiFetch(`${API_BASE}/health`);
     return res.ok;
   } catch {
     return false;

@@ -890,11 +890,11 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - [x] `docs/TestnetDeployment.md` — step-by-step testnet deployment guide
 - [x] Old `devnetClient.ts` files removed (replaced by `ckbClient.ts`)
 
-#### 13.5: Testnet Deployment & Testing
-- [ ] Obtain testnet CKB from faucet
-- [ ] Deploy contracts to CKB testnet (Pudge)
-- [ ] Run full lifecycle test against testnet
-- [ ] Verify wallet connector works with real wallets (JoyID/MetaMask)
+#### 13.5: Testnet Deployment & Testing ✓
+- [x] Obtain testnet CKB from faucet
+- [x] Deploy contracts to CKB testnet (Pudge)
+- [x] Run full lifecycle test against testnet
+- [x] Verify wallet connector works with real wallets (JoyID)
 
 ### Phase 14: Grant Application & Launch
 - [ ] Deploy to CKB mainnet
@@ -953,3 +953,16 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - Deploy script: supports `CKB_NETWORK` + `DEPLOYER_PRIVATE_KEY` env vars, saves artifacts, prints config instructions
 - `.env.example` files for frontend and indexer, `docs/TestnetDeployment.md` guide
 - 20 files changed, old `devnetClient.ts` removed, all 3 packages compile clean
+
+**2026-03-18:** Phase 13.5 — Testnet Deployment & Testing
+- Generated testnet deployer account, funded via Nervos Pudge Faucet (100,000 CKB)
+- Deployed campaign + pledge contracts to CKB testnet (Pudge)
+- Campaign code hash: `0xb71c1c...ea3fc`, Pledge code hash: `0x423442...bc924`
+- Indexer running locally, exposed via ngrok (`castled-maureen-nonmedicative.ngrok-free.dev`)
+- Frontend deployed to Vercel (`decentralized-kickstarter-kappa.vercel.app`)
+- Fixed: Vercel env vars had trailing `\n` from `echo` piping — switched to `printf`
+- Fixed: Tailwind purging dynamic badge classes — added safelist comment
+- Added `ngrok-skip-browser-warning` header to centralized `apiFetch()` in `api.ts`
+- JoyID wallet connector verified working on testnet
+- Full lifecycle tested: create → pledge → finalize (success) → release → destroy
+- Failure path tested: create → pledge → finalize (failed) → refund → destroy
