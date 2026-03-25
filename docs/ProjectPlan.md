@@ -532,14 +532,49 @@ Data:
 
 ## Post-MVP Roadmap (For Grant Proposal)
 
-### v1.1: Enhanced Features
+### v1.1: Trustless Automatic Fund Distribution (Priority: Critical)
+
+**Problem:** In the MVP, backers must manually release funds to the creator (on success) or claim refunds (on failure). This creates a critical dependency — a single unresponsive backer can block the creator from receiving funds, and an unresponsive creator can delay refunds by not finalizing.
+
+**Solution:** Custom Pledge Lock Script that enforces fund distribution based on on-chain campaign status, removing the need for backer/creator cooperation.
+
+#### Custom Pledge Lock Script (Rust, RISC-V)
+- New lock script for pledge cells replaces standard secp256k1 lock
+- On **campaign success**: anyone can spend the pledge cell, but the lock script validates that the output goes to the creator's lock script (stored in campaign cell data)
+- On **campaign failure**: anyone can spend the pledge cell, but the lock script validates that the output goes back to the backer's lock script (stored in pledge cell data)
+- While **campaign is active**: pledge cell is locked (no one can spend it)
+- Lock script reads campaign cell status via cell deps to determine which path is valid
+
+#### Automated Finalization
+- Anyone can finalize an expired campaign (not just the creator) — removes creator as bottleneck
+- Optionally: batch finalize + release/refund in a single transaction
+
+#### Automation Service (Optional)
+- Background bot that watches for finalized campaigns and submits release/refund transactions
+- No private keys needed — the custom lock script controls where funds go, the bot just triggers the transactions
+- Fallback: any user can trigger release/refund from the UI for any campaign (not just their own)
+
+#### UI/UX Changes
+- "Release to Creator" / "Claim Refund" buttons become "Trigger Release" / "Trigger Refund" — callable by anyone
+- Pre-wallet confirmation step showing exact CKB amount before wallet popup
+- Batch release/refund: one-click to process all pledges for a campaign
+
+#### Migration Path
+- New pledge lock script deployed alongside existing contracts
+- New campaigns use the custom lock script; old campaigns continue with manual flow
+- No changes to campaign type script or pledge type script
+
+**Why this matters for the grant:** This is the single most important upgrade for making the platform trustless. Without it, the platform requires cooperation between parties, which defeats the purpose of a decentralized crowdfunding platform. Grant reviewers will likely ask about this — the answer is that the MVP validates the core flow, and v1.1 makes it fully trustless with a custom lock script.
+
+### v1.2: Enhanced Features
 - Campaign cancellation by creator (with refunds)
 - Campaign editing (limited, before first pledge)
 - Creator verification badges
 - Campaign categories and tagging
 - Advanced search and filtering
+- Pre-wallet confirmation dialog showing exact CKB amounts
 
-### v1.2: Multi-Token Support
+### v1.3: Multi-Token Support
 - sUDT integration (stablecoins like USDT/USDC)
 - Token selection during campaign creation
 - Multi-currency display in UI
@@ -673,7 +708,7 @@ Data:
 - [x] Contracts built for RISC-V, deployed to devnet
 
 **Key design decisions:**
-- No custom lock scripts — standard secp256k1 locks are used (backer owns pledge cell → trustless refund)
+- No custom lock scripts — standard secp256k1 locks are used (backer owns pledge cell → trustless refund). Planned for v1.1: custom pledge lock script for automatic fund distribution (see Post-MVP Roadmap)
 - `total_pledged` is always 0 on-chain; real total computed off-chain by indexer
 - Finalization does NOT enforce total_pledged vs funding_goal on-chain (off-chain check only)
 - Campaign lifecycle: Active → (finalize) → Success/Failed → (destroy) → consumed
@@ -760,10 +795,12 @@ Data:
   - Developer guide: architecture, contract build/deploy, API reference, env vars
 
 ### Not Yet Implemented
+- [ ] **Custom Pledge Lock Script** for automatic fund distribution (v1.1 — critical for production)
 - [ ] IPFS integration for off-chain metadata storage (images, rich text)
-- [ ] Real wallet integration (JoyID/MetaMask via CCC connector)
+- [x] Real wallet integration (JoyID via CCC connector) — verified on testnet
 - [ ] User dashboard (my campaigns, my pledges)
-- [ ] Testnet/mainnet deployment
+- [x] Testnet deployment — contracts, indexer (ngrok), frontend (Vercel)
+- [ ] Mainnet deployment
 - [ ] Grant application
 
 ---
