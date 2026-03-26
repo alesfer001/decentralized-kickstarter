@@ -124,6 +124,53 @@ fn validate_receipt_creation() -> i8 {
     0
 }
 
+/// D-12: During refund, verify refund amount matches receipt's stored pledge_amount,
+/// and output goes to backer_lock_hash from receipt data.
+fn validate_receipt_destruction() -> i8 {
+    // Load the receipt being destroyed
+    let receipt_data = match load_cell_data(0, Source::GroupInput) {
+        Ok(d) => d,
+        Err(_) => return ERROR_LOAD_DATA,
+    };
+    let receipt = match ReceiptData::from_bytes(&receipt_data) {
+        Ok(r) => r,
+        Err(code) => return code,
+    };
+
+    // Verify that an output exists going to backer_lock_hash
+    // with capacity >= pledge_amount - MAX_FEE
+    let min_refund = receipt.pledge_amount
+        .checked_sub(MAX_FEE)
+        .unwrap_or(0);
+
+    let mut refund_found = false;
+    for i in 0.. {
+        match load_cell_lock_hash(i, Source::Output) {
+            Ok(hash) => {
+                if hash == receipt.backer_lock_hash {
+                    let cap = match load_cell_capacity(i, Source::Output) {
+                        Ok(c) => c,
+                        Err(_) => return ERROR_LOAD_CAPACITY,
+                    };
+                    if cap >= min_refund {
+                        refund_found = true;
+                        break;
+                    }
+                }
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return ERROR_LOAD_LOCK_HASH,
+        }
+    }
+
+    if !refund_found {
+        debug!("Receipt destruction: refund output missing or insufficient");
+        return ERROR_REFUND_OUTPUT_MISSING;
+    }
+
+    0
+}
+
 pub fn program_entry() -> i8 {
     0
 }
