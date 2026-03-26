@@ -2,15 +2,8 @@ import { Campaign, Pledge } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
-const defaultHeaders: HeadersInit = {
-  "ngrok-skip-browser-warning": "true",
-};
-
 function apiFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, {
-    ...init,
-    headers: { ...defaultHeaders, ...init?.headers },
-  });
+  return fetch(url, init);
 }
 
 /**

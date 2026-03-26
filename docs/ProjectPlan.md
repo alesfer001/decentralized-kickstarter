@@ -933,7 +933,28 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - [x] Run full lifecycle test against testnet
 - [x] Verify wallet connector works with real wallets (JoyID)
 
-### Phase 14: Grant Application & Launch
+### Phase 14: Community Engagement & Feedback
+
+#### 14.1: CKBuilder Project Submission ✓
+- [x] Created issue on [CKBuilder-projects](https://github.com/Nervos-Community-Catalyst/CKBuilder-projects/issues/6) for technical review from CKB core devs
+- [x] Detailed project overview, architecture, security review, and deployment info
+- [x] Specific feedback requests on: custom pledge lock script design, on-chain deadline enforcement, campaign cell identity (TypeID), indexer infrastructure, batch operations
+- [ ] Receive and incorporate technical feedback from reviewers
+
+#### 14.2: Nervos Talk Writeup ✓
+- [x] Write project announcement/writeup for [Nervos Talk](https://talk.nervos.org/)
+- [x] Posted to CKB Development & Technical Discussion category (tags: CKB, dapp)
+- [x] Include: project overview, demo link, architecture summary, roadmap, feedback questions
+- [x] Created new testnet campaign with pledge for live screenshots
+- [ ] Engage with community feedback
+- [ ] Add screenshots and links to post once trust level allows
+
+#### 14.3: External Validation ✓
+- [x] Neon (CKB team member) tested deployed app on testnet — funded a campaign and created his own
+- [x] Confirmed core flows work end-to-end with real wallet (JoyID)
+- [x] Feedback aligned with v1.1 roadmap (custom lock script for trustless escrow)
+
+### Phase 15: Grant Application & Launch
 - [ ] Deploy to CKB mainnet
 - [ ] Prepare grant proposal for CKB Community Fund DAO
 - [ ] Community building and marketing
@@ -1003,3 +1024,15 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - JoyID wallet connector verified working on testnet
 - Full lifecycle tested: create → pledge → finalize (success) → release → destroy
 - Failure path tested: create → pledge → finalize (failed) → refund → destroy
+
+**2026-03-25:** Phase 14 — Community Engagement & Feedback
+- Created CKBuilder-projects issue (#6) for technical review from CKB core devs
+- Feedback requests focus on: custom pledge lock script design, on-chain deadline enforcement, TypeID for campaign cells, batch operations
+- Neon (CKB team member) validated deployed app on testnet — confirmed core flows work with JoyID wallet
+
+**2026-03-26:** Phase 14.2 — Nervos Talk Writeup
+- Published project announcement to Nervos Talk (CKB Development & Technical Discussion, tags: CKB, dapp)
+- Full writeup: problem statement, lifecycle, architecture, tech stack, design decisions, v1.1 roadmap, feedback questions
+- Created fresh testnet campaign (500 CKB goal) + 200 CKB pledge for live screenshots
+- Saved draft at `docs/NervosTalkPost.md` for reference
+- Note: Discourse new-user restrictions blocked links and screenshots — to be added after trust level upgrade
