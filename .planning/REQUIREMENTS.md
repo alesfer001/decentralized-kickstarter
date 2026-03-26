@@ -78,23 +78,23 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Requirement | Phase | Status |
 |------------|-------|--------|
-| LOCK-01 | — | Pending |
-| LOCK-02 | — | Pending |
-| LOCK-03 | — | Pending |
-| LOCK-04 | — | Pending |
-| RCPT-01 | — | Pending |
-| RCPT-02 | — | Pending |
-| RCPT-03 | — | Pending |
-| MERGE-01 | — | Pending |
-| MERGE-02 | — | Pending |
-| CAMP-01 | — | Pending |
-| CAMP-02 | — | Pending |
-| TXB-01 | — | Pending |
-| TXB-02 | — | Pending |
-| TXB-03 | — | Pending |
-| TXB-04 | — | Pending |
-| IDX-01 | — | Pending |
-| IDX-02 | — | Pending |
-| UI-01 | — | Pending |
-| UI-02 | — | Pending |
-| UI-03 | — | Pending |
+| LOCK-01 | Phase 1 | Pending |
+| LOCK-02 | Phase 1 | Pending |
+| LOCK-03 | Phase 1 | Pending |
+| LOCK-04 | Phase 1 | Pending |
+| RCPT-01 | Phase 1 | Pending |
+| RCPT-02 | Phase 1 | Pending |
+| RCPT-03 | Phase 1 | Pending |
+| MERGE-01 | Phase 2 | Pending |
+| MERGE-02 | Phase 1 | Pending |
+| CAMP-01 | Phase 1 | Pending |
+| CAMP-02 | Phase 1 | Pending |
+| TXB-01 | Phase 2 | Pending |
+| TXB-02 | Phase 2 | Pending |
+| TXB-03 | Phase 2 | Pending |
+| TXB-04 | Phase 2 | Pending |
+| IDX-01 | Phase 2 | Pending |
+| IDX-02 | Phase 2 | Pending |
+| UI-01 | Phase 3 | Pending |
+| UI-02 | Phase 3 | Pending |
+| UI-03 | Phase 3 | Pending |
