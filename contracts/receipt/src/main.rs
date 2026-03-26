@@ -172,5 +172,37 @@ fn validate_receipt_destruction() -> i8 {
 }
 
 pub fn program_entry() -> i8 {
-    0
+    debug!("Receipt Type Script running");
+
+    let has_input = match load_cell_data(0, Source::GroupInput) {
+        Ok(_) => true,
+        Err(SysError::IndexOutOfBound) => false,
+        Err(_) => return ERROR_LOAD_DATA,
+    };
+
+    let has_output = match load_cell_data(0, Source::GroupOutput) {
+        Ok(_) => true,
+        Err(SysError::IndexOutOfBound) => false,
+        Err(_) => return ERROR_LOAD_DATA,
+    };
+
+    match (has_input, has_output) {
+        // Creation: validate receipt is created alongside a valid pledge
+        (false, true) => validate_receipt_creation(),
+
+        // Destruction: validate it's part of a valid refund
+        (true, false) => validate_receipt_destruction(),
+
+        // Modification: receipts are immutable (RCPT-02)
+        (true, true) => {
+            debug!("Receipt modification not allowed");
+            ERROR_RECEIPT_MODIFICATION_NOT_ALLOWED
+        }
+
+        // No cells — shouldn't happen
+        (false, false) => {
+            debug!("No receipt cells in transaction");
+            0
+        }
+    }
 }
