@@ -254,9 +254,12 @@ pub fn program_entry() -> i8 {
             0
         }
 
-        // Destruction: has input, no output — allow (lock script guards spending)
+        // Destruction: has input, no output
+        // CAMP-02: Full destruction protection is enforced off-chain (D-09).
+        // The pledge lock script's fail-safe refund (D-06) protects backers
+        // regardless — if campaign cell is destroyed, backers get automatic refund.
         (true, false) => {
-            debug!("Campaign destruction allowed");
+            debug!("Campaign destruction — backers protected by fail-safe refund (D-06)");
             0
         }
 
