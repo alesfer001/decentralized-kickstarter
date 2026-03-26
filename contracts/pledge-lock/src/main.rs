@@ -118,6 +118,67 @@ impl CampaignData {
     }
 }
 
+/// Search cell_deps for a cell whose type script hash matches the expected campaign hash.
+fn find_campaign_in_cell_deps(expected_hash: &[u8; 32]) -> Option<CampaignData> {
+    for i in 0.. {
+        match load_cell_type_hash(i, Source::CellDep) {
+            Ok(Some(hash)) => {
+                if hash == *expected_hash {
+                    let data = load_cell_data(i, Source::CellDep).ok()?;
+                    return CampaignData::from_bytes(&data).ok();
+                }
+            }
+            Ok(None) => continue,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// Sum capacity of all cells in GroupInput (cells sharing this lock script).
+fn sum_group_input_capacity() -> Result<u64, i8> {
+    let mut total: u64 = 0;
+    for i in 0.. {
+        match load_cell_capacity(i, Source::GroupInput) {
+            Ok(cap) => {
+                total = total.checked_add(cap).ok_or(ERROR_OVERFLOW)?;
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_CAPACITY),
+        }
+    }
+    Ok(total)
+}
+
+/// Verify that outputs going to expected_lock_hash have total capacity >= min_capacity - MAX_FEE.
+fn find_output_to_lock_hash(expected_lock_hash: &[u8; 32], min_capacity: u64) -> Result<(), i8> {
+    let min_required = min_capacity.checked_sub(MAX_FEE).unwrap_or(0);
+    let mut total_to_destination: u64 = 0;
+
+    for i in 0.. {
+        match load_cell_lock_hash(i, Source::Output) {
+            Ok(hash) => {
+                if hash == *expected_lock_hash {
+                    let cap = load_cell_capacity(i, Source::Output)
+                        .map_err(|_| ERROR_LOAD_CAPACITY)?;
+                    total_to_destination = total_to_destination
+                        .checked_add(cap)
+                        .ok_or(ERROR_OVERFLOW)?;
+                }
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_LOCK_HASH),
+        }
+    }
+
+    if total_to_destination >= min_required {
+        Ok(())
+    } else {
+        Err(ERROR_INSUFFICIENT_OUTPUT)
+    }
+}
+
 pub fn program_entry() -> i8 {
     0
 }
