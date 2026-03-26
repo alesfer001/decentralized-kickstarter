@@ -80,6 +80,44 @@ impl PledgeLockArgs {
     }
 }
 
+/// Campaign status enum (mirrors campaign contract)
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CampaignStatus {
+    Active = 0,
+    Success = 1,
+    Failed = 2,
+}
+
+/// Campaign data layout (65 bytes) — read-only, for parsing cell_dep data
+struct CampaignData {
+    creator_lock_hash: [u8; 32],
+    status: CampaignStatus,
+}
+
+impl CampaignData {
+    const SIZE: usize = 65;
+
+    fn from_bytes(data: &[u8]) -> Result<Self, i8> {
+        if data.len() < Self::SIZE {
+            return Err(ERROR_INVALID_ARGS);
+        }
+        let mut creator_lock_hash = [0u8; 32];
+        creator_lock_hash.copy_from_slice(&data[0..32]);
+        // Skip funding_goal (32..40), deadline_block (40..48), total_pledged (48..56)
+        let status = match data[56] {
+            0 => CampaignStatus::Active,
+            1 => CampaignStatus::Success,
+            2 => CampaignStatus::Failed,
+            _ => return Err(ERROR_INVALID_ARGS),
+        };
+        Ok(CampaignData {
+            creator_lock_hash,
+            status,
+        })
+    }
+}
+
 pub fn program_entry() -> i8 {
     0
 }
