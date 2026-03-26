@@ -179,6 +179,152 @@ fn find_output_to_lock_hash(expected_lock_hash: &[u8; 32], min_capacity: u64) ->
     }
 }
 
-pub fn program_entry() -> i8 {
+/// D-04: After deadline + Success -> output must go to creator_lock_hash
+fn validate_release(lock_args: &PledgeLockArgs, campaign: &CampaignData) -> i8 {
+    let total_input_capacity = match sum_group_input_capacity() {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    match find_output_to_lock_hash(&campaign.creator_lock_hash, total_input_capacity) {
+        Ok(()) => 0,
+        Err(code) => code,
+    }
+}
+
+/// D-05/D-06: After deadline + Failed (or no cell_dep) -> output must go to backer_lock_hash
+fn validate_refund(lock_args: &PledgeLockArgs) -> i8 {
+    let total_input_capacity = match sum_group_input_capacity() {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    match find_output_to_lock_hash(&lock_args.backer_lock_hash, total_input_capacity) {
+        Ok(()) => 0,
+        Err(code) => code,
+    }
+}
+
+/// D-03: Before deadline, only merging is allowed.
+/// Merge = multiple inputs with same lock -> 1 output with same lock, capacity preserved exactly.
+fn validate_merge(lock_args: &PledgeLockArgs) -> i8 {
+    // Count group inputs and sum capacity
+    let mut input_count: usize = 0;
+    let mut total_input_cap: u64 = 0;
+    for i in 0.. {
+        match load_cell_capacity(i, Source::GroupInput) {
+            Ok(cap) => {
+                input_count += 1;
+                total_input_cap = match total_input_cap.checked_add(cap) {
+                    Some(v) => v,
+                    None => return ERROR_OVERFLOW,
+                };
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return ERROR_LOAD_CAPACITY,
+        }
+    }
+
+    // Must have multiple inputs (otherwise not a merge)
+    if input_count < 2 {
+        return ERROR_NOT_A_MERGE;
+    }
+
+    // Must have exactly 1 group output
+    match load_cell_capacity(0, Source::GroupOutput) {
+        Ok(_) => {}
+        Err(_) => return ERROR_NO_MERGE_OUTPUT,
+    }
+    match load_cell_capacity(1, Source::GroupOutput) {
+        Ok(_) => return ERROR_MULTIPLE_MERGE_OUTPUTS,
+        Err(SysError::IndexOutOfBound) => {} // Good — only 1 output
+        Err(_) => return ERROR_LOAD_CAPACITY,
+    }
+
+    // Output capacity must equal total input capacity (no fee during merge)
+    let output_cap = match load_cell_capacity(0, Source::GroupOutput) {
+        Ok(c) => c,
+        Err(_) => return ERROR_LOAD_CAPACITY,
+    };
+    if output_cap != total_input_cap {
+        return ERROR_MERGE_CAPACITY_MISMATCH;
+    }
+
+    // Verify output has same lock script hash as inputs
+    let input_lock_hash = match load_cell_lock_hash(0, Source::GroupInput) {
+        Ok(h) => h,
+        Err(_) => return ERROR_LOAD_LOCK_HASH,
+    };
+    let output_lock_hash = match load_cell_lock_hash(0, Source::GroupOutput) {
+        Ok(h) => h,
+        Err(_) => return ERROR_LOAD_LOCK_HASH,
+    };
+    if input_lock_hash != output_lock_hash {
+        return ERROR_MERGE_LOCK_MISMATCH;
+    }
+
     0
+}
+
+pub fn program_entry() -> i8 {
+    debug!("Pledge Lock Script running");
+
+    // 1. Load own script and parse args
+    let script = match load_script() {
+        Ok(s) => s,
+        Err(_) => {
+            debug!("Failed to load script");
+            return ERROR_INVALID_ARGS;
+        }
+    };
+    let args = script.args().raw_data();
+    let lock_args = match PledgeLockArgs::from_bytes(&args) {
+        Ok(a) => a,
+        Err(code) => return code,
+    };
+
+    // 2. Check since field to determine before/after deadline
+    let since_raw = match load_input_since(0, Source::GroupInput) {
+        Ok(v) => v,
+        Err(_) => return ERROR_LOAD_SINCE,
+    };
+
+    let is_after_deadline = if since_raw == 0 {
+        // since=0 means no time constraint — before deadline path
+        false
+    } else {
+        // Parse the since value to verify it's absolute block number
+        let since = Since::new(since_raw);
+        if !since.is_absolute() || !since.flags_is_valid() {
+            return ERROR_INVALID_SINCE;
+        }
+        match since.extract_lock_value() {
+            Some(LockValue::BlockNumber(block)) => {
+                if block < lock_args.deadline_block {
+                    return ERROR_SINCE_BELOW_DEADLINE;
+                }
+                true
+            }
+            _ => return ERROR_INVALID_SINCE,
+        }
+    };
+
+    if !is_after_deadline {
+        // BEFORE DEADLINE: only merge is allowed
+        return validate_merge(&lock_args);
+    }
+
+    // AFTER DEADLINE: release or refund based on campaign status
+    match find_campaign_in_cell_deps(&lock_args.campaign_type_script_hash) {
+        Some(campaign_data) => {
+            match campaign_data.status {
+                CampaignStatus::Success => validate_release(&lock_args, &campaign_data),
+                CampaignStatus::Failed => validate_refund(&lock_args),
+                CampaignStatus::Active => ERROR_CAMPAIGN_STILL_ACTIVE,
+            }
+        }
+        None => {
+            // D-06: Fail-safe refund — no campaign cell_dep means default to backer refund
+            debug!("No campaign cell_dep found — fail-safe refund to backer");
+            validate_refund(&lock_args)
+        }
+    }
 }
