@@ -69,6 +69,61 @@ impl ReceiptData {
     }
 }
 
+/// D-11: Receipt must be created in same transaction as a valid pledge cell
+/// with matching backer_lock_hash in its lock args.
+fn validate_receipt_creation() -> i8 {
+    let receipt_data = match load_cell_data(0, Source::GroupOutput) {
+        Ok(d) => d,
+        Err(_) => return ERROR_LOAD_DATA,
+    };
+    let receipt = match ReceiptData::from_bytes(&receipt_data) {
+        Ok(r) => r,
+        Err(code) => return code,
+    };
+
+    // Validate pledge_amount > 0
+    if receipt.pledge_amount == 0 {
+        debug!("Receipt creation: pledge_amount must be > 0");
+        return ERROR_ZERO_PLEDGE_AMOUNT;
+    }
+
+    // Validate backer_lock_hash is not all zeros
+    if receipt.backer_lock_hash == [0u8; 32] {
+        debug!("Receipt creation: backer_lock_hash must not be zero");
+        return ERROR_ZERO_BACKER_HASH;
+    }
+
+    // Search all transaction outputs for a pledge cell whose lock args contain
+    // a matching backer_lock_hash at offset [40..72] (pledge lock args layout).
+    let mut found_matching_pledge = false;
+    for i in 0.. {
+        match load_cell_lock(i, Source::Output) {
+            Ok(lock_script) => {
+                let lock_args = lock_script.args().raw_data();
+                // Check if this is a pledge lock (args length >= 72)
+                // and backer_lock_hash at [40..72] matches
+                if lock_args.len() >= PLEDGE_LOCK_ARGS_SIZE {
+                    let mut backer_hash_in_lock = [0u8; 32];
+                    backer_hash_in_lock.copy_from_slice(&lock_args[40..72]);
+                    if backer_hash_in_lock == receipt.backer_lock_hash {
+                        found_matching_pledge = true;
+                        break;
+                    }
+                }
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return ERROR_LOAD_LOCK,
+        }
+    }
+
+    if !found_matching_pledge {
+        debug!("Receipt creation: no matching pledge cell found in outputs");
+        return ERROR_NO_MATCHING_PLEDGE;
+    }
+
+    0
+}
+
 pub fn program_entry() -> i8 {
     0
 }
