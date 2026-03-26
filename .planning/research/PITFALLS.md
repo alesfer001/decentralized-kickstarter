@@ -135,6 +135,34 @@
 4. **Boundary tests:** Deadline exactly at current block, one block before/after
 5. **Devnet E2E:** Full lifecycle test with real transactions
 
+## Additional Critical Findings (from deep research)
+
+### 11. Lock Script Dedup — Silent Validation Skip
+**Risk:** CRITICAL
+**Description:** CKB runs each unique lock script only ONCE per transaction. If multiple pledge cells share identical lock args (same campaign, same deadline, same backer), the lock script executes once and validates one output — then ALL matching inputs pass. An attacker could add extra pledge cells that slip through.
+
+**Prevention:** Encode `backer_lock_hash` in lock args so each pledge cell for a different backer has unique lock args. This forces separate lock script execution per backer.
+
+**Which phase:** Phase 1 (lock script args design — CRITICAL to get right from the start)
+
+### 12. Current Pledge Type Script Blocks Merging
+**Risk:** BLOCKING for merge feature
+**Description:** The existing `contracts/pledge/src/main.rs` returns `ERROR_MODIFICATION_NOT_ALLOWED` when both input and output pledge cells exist `(true, true)`. This prevents the merge pattern (N inputs → 1 output) and partial refund pattern.
+
+**Prevention:** Update pledge type script to allow:
+- Merge: N inputs → 1 output (verify capacity sum preserved)
+- Partial refund from merged cell: 1 input → 1 reduced output + 1 refund output
+
+**Which phase:** Phase 1 (type script updates alongside lock script)
+
+### 13. TypeID for Campaign Cell Identity
+**Risk:** HIGH (strengthens fake cell_dep defense)
+**Description:** Using TypeID on campaign cells gives them an unforgeable identity. The lock script can verify the cell_dep's type script hash includes the TypeID, making it impossible to create a fake campaign cell with the same type script hash.
+
+**Prevention:** Adopt TypeID for campaign cells. Store the full type script hash (including TypeID) in pledge lock args.
+
+**Which phase:** Phase 1 (campaign type script update)
+
 ## Prevention Strategies Summary
 
 | Pitfall | Prevention | Phase |
