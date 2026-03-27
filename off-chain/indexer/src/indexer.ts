@@ -1,7 +1,7 @@
 import { ccc } from "@ckb-ccc/core";
-import { Campaign, Pledge, CampaignStatus } from "./types";
-import { parseCampaignData, parsePledgeData } from "./parser";
-import { Database, DBCampaign, DBPledge } from "./database";
+import { Campaign, Pledge, Receipt, CampaignStatus } from "./types";
+import { parseCampaignData, parsePledgeData, parseReceiptData } from "./parser";
+import { Database, DBCampaign, DBPledge, DBReceipt } from "./database";
 
 /**
  * Indexer for Campaign and Pledge cells
@@ -13,6 +13,8 @@ export class CampaignIndexer {
   private pollingTimer: ReturnType<typeof setInterval> | null = null;
   private campaignCodeHash: string = "";
   private pledgeCodeHash: string = "";
+  private receiptCodeHash: string = "";
+  private pledgeLockCodeHash: string = "";
 
   constructor(rpcUrl: string, db: Database) {
     this.client = new ccc.ClientPublicTestnet({ url: rpcUrl });
@@ -63,7 +65,12 @@ export class CampaignIndexer {
   /**
    * Index all cells from RPC and write to database
    */
-  async indexAll(campaignCodeHash: string, pledgeCodeHash: string): Promise<{ campaigns: number; pledges: number }> {
+  async indexAll(
+    campaignCodeHash: string,
+    pledgeCodeHash: string,
+    receiptCodeHash?: string,
+    pledgeLockCodeHash?: string
+  ): Promise<{ campaigns: number; pledges: number; receipts: number }> {
     console.log("Indexing all cells...");
 
     // Fetch campaigns from RPC
@@ -158,19 +165,88 @@ export class CampaignIndexer {
       }
     }
 
-    // Atomically replace all data in DB
-    this.db.replaceLiveCells(dbCampaigns, dbPledges);
+    // Fetch and parse receipt cells
+    const dbReceipts: DBReceipt[] = [];
+    if (receiptCodeHash) {
+      const receiptSearchKey = {
+        script: {
+          codeHash: receiptCodeHash,
+          hashType: "data2" as const,
+          args: "0x",
+        },
+        scriptType: "type" as const,
+        scriptSearchMode: "exact" as const,
+      };
 
-    console.log(`Indexed ${dbCampaigns.length} campaigns and ${dbPledges.length} pledges`);
-    return { campaigns: dbCampaigns.length, pledges: dbPledges.length };
+      const receiptCells: ccc.Cell[] = [];
+      for await (const cell of this.client.findCells(receiptSearchKey, "asc", 1000)) {
+        receiptCells.push(cell);
+      }
+
+      for (const cell of receiptCells) {
+        try {
+          const outPointStr = `${cell.outPoint.txHash}_${cell.outPoint.index}`;
+          const data = parseReceiptData(cell.outputData);
+          const blockNumber = await this.getBlockNumberForTx(cell.outPoint.txHash);
+
+          // Derive campaign_id by looking up the pledge cell in the same transaction
+          let campaignId = "";
+          try {
+            const txWithStatus = await this.client.getTransaction(cell.outPoint.txHash);
+            if (txWithStatus && txWithStatus.transaction) {
+              const txOutputs = txWithStatus.transaction.outputs;
+              const txOutputsData = txWithStatus.transaction.outputsData;
+              for (let i = 0; i < txOutputs.length; i++) {
+                const output = txOutputs[i];
+                if (output.type && output.type.codeHash === pledgeCodeHash) {
+                  const pledgeInfo = parsePledgeData(txOutputsData[i]);
+                  campaignId = pledgeInfo.campaignId;
+                  break;
+                }
+              }
+            }
+          } catch (error) {
+            console.error("Error deriving campaign_id for receipt:", error);
+          }
+
+          dbReceipts.push({
+            id: outPointStr,
+            tx_hash: cell.outPoint.txHash,
+            output_index: Number(cell.outPoint.index),
+            campaign_id: campaignId,
+            backer_lock_hash: data.backerLockHash,
+            pledge_amount: data.pledgeAmount.toString(),
+            status: "live",
+            block_number: blockNumber.toString(),
+            created_at: blockNumber.toString(),
+          });
+        } catch (error) {
+          console.error("Error parsing receipt cell:", error);
+        }
+      }
+    }
+
+    // Atomically replace all data in DB
+    this.db.replaceLiveCells(dbCampaigns, dbPledges, dbReceipts);
+
+    console.log(`Indexed ${dbCampaigns.length} campaigns, ${dbPledges.length} pledges, and ${dbReceipts.length} receipts`);
+    return { campaigns: dbCampaigns.length, pledges: dbPledges.length, receipts: dbReceipts.length };
   }
 
   /**
    * Start background polling
    */
-  startBackgroundIndexing(campaignCodeHash: string, pledgeCodeHash: string, intervalMs: number = 10000) {
+  startBackgroundIndexing(
+    campaignCodeHash: string,
+    pledgeCodeHash: string,
+    intervalMs: number = 10000,
+    receiptCodeHash?: string,
+    pledgeLockCodeHash?: string
+  ) {
     this.campaignCodeHash = campaignCodeHash;
     this.pledgeCodeHash = pledgeCodeHash;
+    this.receiptCodeHash = receiptCodeHash || "";
+    this.pledgeLockCodeHash = pledgeLockCodeHash || "";
 
     if (this.pollingTimer) {
       clearInterval(this.pollingTimer);
@@ -178,7 +254,12 @@ export class CampaignIndexer {
 
     this.pollingTimer = setInterval(async () => {
       try {
-        await this.indexAll(this.campaignCodeHash, this.pledgeCodeHash);
+        await this.indexAll(
+          this.campaignCodeHash,
+          this.pledgeCodeHash,
+          this.receiptCodeHash || undefined,
+          this.pledgeLockCodeHash || undefined
+        );
       } catch (error) {
         console.error("Background indexing error:", error);
       }
@@ -310,6 +391,43 @@ export class CampaignIndexer {
    */
   getPledges(): Pledge[] {
     return this.db.getAllPledges().map((row) => this.dbToPledge(row));
+  }
+
+  /**
+   * Convert DB row to Receipt domain object
+   */
+  private dbToReceipt(row: DBReceipt): Receipt {
+    return {
+      id: row.id,
+      txHash: row.tx_hash,
+      index: row.output_index,
+      campaignId: row.campaign_id,
+      backerLockHash: row.backer_lock_hash,
+      pledgeAmount: BigInt(row.pledge_amount),
+      status: row.status,
+      createdAt: BigInt(row.created_at),
+    };
+  }
+
+  /**
+   * Get all receipts
+   */
+  getReceipts(): Receipt[] {
+    return this.db.getAllReceipts().map((row) => this.dbToReceipt(row));
+  }
+
+  /**
+   * Get receipts for a specific campaign
+   */
+  getReceiptsForCampaign(campaignId: string): Receipt[] {
+    return this.db.getReceiptsForCampaign(campaignId).map((row) => this.dbToReceipt(row));
+  }
+
+  /**
+   * Get receipts for a specific backer
+   */
+  getReceiptsForBacker(backerLockHash: string): Receipt[] {
+    return this.db.getReceiptsForBacker(backerLockHash).map((row) => this.dbToReceipt(row));
   }
 
   /**
