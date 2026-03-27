@@ -79,3 +79,23 @@ export interface PledgeCell {
   capacity: bigint;
   blockNumber: bigint;
 }
+
+/**
+ * Receipt data structure matching the on-chain layout (40 bytes)
+ */
+export interface ReceiptData {
+  pledgeAmount: bigint;
+  backerLockHash: string;  // 32 bytes hex
+}
+
+/**
+ * Receipt with metadata (indexed from chain)
+ */
+export interface Receipt extends ReceiptData {
+  id: string;               // cell outpoint: "{txHash}_{index}"
+  txHash: string;
+  index: number;
+  campaignId: string;        // derived from associated pledge in same tx
+  status: string;            // "live" or "spent"
+  createdAt: bigint;         // block number
+}

@@ -131,6 +131,40 @@ export function serializePledgeData(params: PledgeParams): string {
 }
 
 /**
+ * Serialize receipt cell data
+ * Layout (40 bytes):
+ * - pledge_amount: u64 LE    (bytes 0-7)
+ * - backer_lock_hash: [u8; 32] (bytes 8-39)
+ */
+export function serializeReceiptData(pledgeAmount: bigint, backerLockHash: string): string {
+  const amount = u64ToHexLE(pledgeAmount);
+  const hash = backerLockHash.startsWith("0x") ? backerLockHash.slice(2) : backerLockHash;
+  return "0x" + amount + hash;
+}
+
+/**
+ * Serialize pledge lock script args
+ * Layout (72 bytes):
+ * - campaign_type_script_hash: [u8; 32] (bytes 0-31)
+ * - deadline_block: u64 LE              (bytes 32-39)
+ * - backer_lock_hash: [u8; 32]          (bytes 40-71)
+ */
+export function serializePledgeLockArgs(
+  campaignTypeScriptHash: string,
+  deadlineBlock: bigint,
+  backerLockHash: string
+): string {
+  const campaignHash = campaignTypeScriptHash.startsWith("0x")
+    ? campaignTypeScriptHash.slice(2)
+    : campaignTypeScriptHash;
+  const deadline = u64ToHexLE(deadlineBlock);
+  const backerHash = backerLockHash.startsWith("0x")
+    ? backerLockHash.slice(2)
+    : backerLockHash;
+  return "0x" + campaignHash + deadline + backerHash;
+}
+
+/**
  * Calculate required capacity for a cell
  * CKB formula: capacity >= sum(capacity, data, type, lock)
  */
