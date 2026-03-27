@@ -1,4 +1,4 @@
-import { Campaign, Pledge } from "./types";
+import { Campaign, Pledge, Receipt } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -67,6 +67,28 @@ export async function fetchBackerPledges(lockHash: string): Promise<Pledge[]> {
   const res = await apiFetch(`${API_BASE}/pledges/backer/${encodeURIComponent(lockHash)}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch backer pledges: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/**
+ * Fetch receipts for a specific campaign
+ */
+export async function fetchReceiptsForCampaign(campaignId: string): Promise<Receipt[]> {
+  const res = await apiFetch(`${API_BASE}/receipts/campaign/${encodeURIComponent(campaignId)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch receipts: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/**
+ * Fetch receipts for a specific backer
+ */
+export async function fetchReceiptsForBacker(lockHash: string): Promise<Receipt[]> {
+  const res = await apiFetch(`${API_BASE}/receipts/backer/${encodeURIComponent(lockHash)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch backer receipts: ${res.statusText}`);
   }
   return res.json();
 }
