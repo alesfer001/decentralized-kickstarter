@@ -85,3 +85,52 @@ export interface DestroyCampaignParams {
   campaignOutPoint: { txHash: string; index: number };
   campaignCapacity: bigint;
 }
+
+/**
+ * Parameters for creating a pledge with receipt (v1.1 trustless model)
+ * Creates both a pledge cell (locked with custom pledge lock) and a receipt cell atomically.
+ */
+export interface CreatePledgeWithReceiptParams {
+  campaignOutPoint: { txHash: string; index: number };
+  campaignTypeScriptHash: string;  // hash of campaign's type script (for pledge lock args)
+  deadlineBlock: bigint;           // from campaign data
+  backerLockHash: string;          // backer's lock script hash
+  amount: bigint;                  // pledge amount in shannons
+  campaignId: string;              // campaign identifier for pledge cell data
+}
+
+/**
+ * Parameters for permissionless release (anyone triggers, lock routes funds to creator)
+ */
+export interface PermissionlessReleaseParams {
+  pledgeOutPoint: { txHash: string; index: number };
+  pledgeCapacity: bigint;
+  campaignCellDep: { txHash: string; index: number };
+  creatorLockScript: { codeHash: string; hashType: string; args: string };
+  deadlineBlock: bigint;  // for since field
+}
+
+/**
+ * Parameters for permissionless refund (anyone triggers, lock routes funds to backer)
+ */
+export interface PermissionlessRefundParams {
+  pledgeOutPoint: { txHash: string; index: number };
+  pledgeCapacity: bigint;
+  receiptOutPoint: { txHash: string; index: number };
+  receiptCapacity: bigint;
+  campaignCellDep?: { txHash: string; index: number };  // optional for fail-safe refund
+  backerLockScript: { codeHash: string; hashType: string; args: string };
+  deadlineBlock: bigint;
+}
+
+/**
+ * Parameters for merging N pledge cells into 1 (same backer, same campaign)
+ */
+export interface MergeContributionsParams {
+  pledgeOutPoints: Array<{ txHash: string; index: number }>;  // N >= 2
+  pledgeCapacities: bigint[];  // capacity of each input pledge cell
+  campaignId: string;
+  backerLockHash: string;
+  pledgeLockArgs: string;  // full 72-byte hex args for the pledge lock
+  totalAmount: bigint;     // sum of all pledge amounts for output data
+}

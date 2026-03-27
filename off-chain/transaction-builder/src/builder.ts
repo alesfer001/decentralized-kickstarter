@@ -1,5 +1,5 @@
 import { ccc } from "@ckb-ccc/core";
-import { CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams } from "./types";
+import { CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams, CreatePledgeWithReceiptParams, PermissionlessReleaseParams, PermissionlessRefundParams, MergeContributionsParams } from "./types";
 import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize } from "./serializer";
 import { createCkbClient, NetworkType } from "./ckbClient";
 
