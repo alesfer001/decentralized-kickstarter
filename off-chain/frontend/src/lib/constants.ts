@@ -126,6 +126,17 @@ export const CAMPAIGN_DATA_SIZE = 65;
 export const PLEDGE_DATA_SIZE = 72;
 
 /**
+ * CKB Explorer base URLs per network
+ */
+const EXPLORER_URLS: Record<NetworkType, string> = {
+  devnet: "",
+  testnet: "https://pudge.explorer.nervos.org",
+  mainnet: "https://explorer.nervos.org",
+};
+
+export const EXPLORER_URL = EXPLORER_URLS[NETWORK];
+
+/**
  * DEVNET ONLY — Test accounts (from OffCKB)
  * These accounts are pre-funded with 42,000,000 CKB each.
  * WARNING: These private keys are publicly known. NEVER use on mainnet or testnet with real funds.
