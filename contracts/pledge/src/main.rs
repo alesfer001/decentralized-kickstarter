@@ -26,6 +26,11 @@ use ckb_std::{
 const ERROR_NO_SCRIPT: i8 = 7;
 const ERROR_LOAD_DATA: i8 = 9;
 const ERROR_MODIFICATION_NOT_ALLOWED: i8 = 10;
+const ERROR_MERGE_DIFFERENT_CAMPAIGNS: i8 = 11;
+const ERROR_MERGE_AMOUNT_MISMATCH: i8 = 12;
+const ERROR_OVERFLOW: i8 = 13;
+const ERROR_CAMPAIGN_MISMATCH: i8 = 14;
+const ERROR_PARTIAL_REFUND_INVALID: i8 = 15;
 
 /// Pledge data structure (stored in cell data)
 /// Layout (total: 72 bytes):
@@ -96,6 +101,121 @@ impl PledgeData {
     }
 }
 
+/// Count cells matching the current type script in the given source.
+fn count_group_cells(source: Source) -> usize {
+    let mut count = 0;
+    for i in 0.. {
+        match load_cell_data(i, source) {
+            Ok(_) => count += 1,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => break,
+        }
+    }
+    count
+}
+
+/// D-13: Merge N pledge cells into 1 output.
+/// All inputs must reference the same campaign. Output amount must equal sum of input amounts.
+fn validate_merge_pledge() -> i8 {
+    // Load first input to get reference campaign_id
+    let first_data = match load_cell_data(0, Source::GroupInput) {
+        Ok(d) => d,
+        Err(_) => return ERROR_LOAD_DATA,
+    };
+    let first_pledge = match PledgeData::from_bytes(&first_data) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+
+    // Sum all input amounts and verify same campaign_id
+    let mut total_amount: u64 = 0;
+    for i in 0.. {
+        match load_cell_data(i, Source::GroupInput) {
+            Ok(data) => {
+                let pledge = match PledgeData::from_bytes(&data) {
+                    Ok(p) => p,
+                    Err(code) => return code,
+                };
+                if pledge.campaign_id != first_pledge.campaign_id {
+                    debug!("Merge: input {} has different campaign_id", i);
+                    return ERROR_MERGE_DIFFERENT_CAMPAIGNS;
+                }
+                total_amount = match total_amount.checked_add(pledge.amount) {
+                    Some(v) => v,
+                    None => return ERROR_OVERFLOW,
+                };
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return ERROR_LOAD_DATA,
+        }
+    }
+
+    // Verify output pledge data
+    let output_data = match load_cell_data(0, Source::GroupOutput) {
+        Ok(d) => d,
+        Err(_) => return ERROR_LOAD_DATA,
+    };
+    let output_pledge = match PledgeData::from_bytes(&output_data) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+
+    // Output must reference same campaign
+    if output_pledge.campaign_id != first_pledge.campaign_id {
+        debug!("Merge: output has different campaign_id");
+        return ERROR_MERGE_DIFFERENT_CAMPAIGNS;
+    }
+
+    // Output amount must equal sum of input amounts
+    if output_pledge.amount != total_amount {
+        debug!("Merge: output amount {} != input total {}", output_pledge.amount, total_amount);
+        return ERROR_MERGE_AMOUNT_MISMATCH;
+    }
+
+    0
+}
+
+/// D-14: Partial refund from merged cell.
+/// 1 input -> 1 reduced output (capacity difference matches receipt being destroyed).
+/// The receipt type script validates its own destruction separately.
+fn validate_partial_refund() -> i8 {
+    let input_data = match load_cell_data(0, Source::GroupInput) {
+        Ok(d) => d,
+        Err(_) => return ERROR_LOAD_DATA,
+    };
+    let input_pledge = match PledgeData::from_bytes(&input_data) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+
+    let output_data = match load_cell_data(0, Source::GroupOutput) {
+        Ok(d) => d,
+        Err(_) => return ERROR_LOAD_DATA,
+    };
+    let output_pledge = match PledgeData::from_bytes(&output_data) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+
+    // Must reference same campaign
+    if input_pledge.campaign_id != output_pledge.campaign_id {
+        debug!("Partial refund: campaign_id mismatch");
+        return ERROR_CAMPAIGN_MISMATCH;
+    }
+
+    // Output amount must be less than input amount (some was refunded)
+    if output_pledge.amount >= input_pledge.amount {
+        debug!("Partial refund: output amount must be less than input amount");
+        return ERROR_PARTIAL_REFUND_INVALID;
+    }
+
+    // The difference (input_amount - output_amount) should equal the receipt
+    // being destroyed in this transaction. The receipt type script validates
+    // its own destruction, so we don't need to cross-check here.
+
+    0
+}
+
 pub fn program_entry() -> i8 {
     debug!("Pledge Type Script running");
 
@@ -150,10 +270,23 @@ pub fn program_entry() -> i8 {
             0
         }
 
-        // Modification: has input AND output — reject (pledges are immutable)
+        // Modification: has input AND output — check if merge or partial refund
         (true, true) => {
-            debug!("Pledge modification not allowed");
-            ERROR_MODIFICATION_NOT_ALLOWED
+            let input_count = count_group_cells(Source::GroupInput);
+            let output_count = count_group_cells(Source::GroupOutput);
+
+            if input_count >= 2 && output_count == 1 {
+                // MERGE: N inputs -> 1 output (D-13 / MERGE-02)
+                debug!("Pledge merge: {} inputs -> 1 output", input_count);
+                validate_merge_pledge()
+            } else if input_count == 1 && output_count == 1 {
+                // PARTIAL REFUND from merged cell (D-14 / MERGE-02)
+                debug!("Pledge partial refund: 1 input -> 1 reduced output");
+                validate_partial_refund()
+            } else {
+                debug!("Invalid pledge modification pattern: {} inputs -> {} outputs", input_count, output_count);
+                ERROR_MODIFICATION_NOT_ALLOWED
+            }
         }
 
         // No input, no output — shouldn't happen but allow
