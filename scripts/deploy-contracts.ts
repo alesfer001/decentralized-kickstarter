@@ -170,6 +170,12 @@ async function main() {
   const pledgeBinary = path.join(
     contractsDir, "pledge", "target", "riscv64imac-unknown-none-elf", "release", "pledge"
   );
+  const pledgeLockBinary = path.join(
+    contractsDir, "pledge-lock", "target", "riscv64imac-unknown-none-elf", "release", "pledge-lock"
+  );
+  const receiptBinary = path.join(
+    contractsDir, "receipt", "target", "riscv64imac-unknown-none-elf", "release", "receipt"
+  );
 
   // Deploy campaign contract
   const campaign = await deployContract(signer, campaignBinary, "Campaign");
@@ -186,6 +192,24 @@ async function main() {
 
   if (NETWORK !== "devnet") {
     await waitForTx(client, pledge.txHash);
+  } else {
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+
+  // Deploy pledge-lock contract
+  const pledgeLock = await deployContract(signer, pledgeLockBinary, "Pledge-Lock");
+
+  if (NETWORK !== "devnet") {
+    await waitForTx(client, pledgeLock.txHash);
+  } else {
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+
+  // Deploy receipt contract
+  const receipt = await deployContract(signer, receiptBinary, "Receipt");
+
+  if (NETWORK !== "devnet") {
+    await waitForTx(client, receipt.txHash);
   }
 
   const result = {
@@ -193,6 +217,8 @@ async function main() {
     deployedAt: new Date().toISOString(),
     campaign: { codeHash: campaign.codeHash, txHash: campaign.txHash, index: campaign.index },
     pledge: { codeHash: pledge.codeHash, txHash: pledge.txHash, index: pledge.index },
+    pledgeLock: { codeHash: pledgeLock.codeHash, txHash: pledgeLock.txHash, index: pledgeLock.index },
+    receipt: { codeHash: receipt.codeHash, txHash: receipt.txHash, index: receipt.index },
   };
 
   console.log("\n=== Deployment Complete ===");
@@ -215,10 +241,16 @@ async function main() {
     console.log(`  NEXT_PUBLIC_CAMPAIGN_TX_HASH=${campaign.txHash}`);
     console.log(`  NEXT_PUBLIC_PLEDGE_CODE_HASH=${pledge.codeHash}`);
     console.log(`  NEXT_PUBLIC_PLEDGE_TX_HASH=${pledge.txHash}`);
+    console.log(`  NEXT_PUBLIC_PLEDGE_LOCK_CODE_HASH=${pledgeLock.codeHash}`);
+    console.log(`  NEXT_PUBLIC_PLEDGE_LOCK_TX_HASH=${pledgeLock.txHash}`);
+    console.log(`  NEXT_PUBLIC_RECEIPT_CODE_HASH=${receipt.codeHash}`);
+    console.log(`  NEXT_PUBLIC_RECEIPT_TX_HASH=${receipt.txHash}`);
     console.log("\nSet these for the indexer:");
     console.log(`  CKB_NETWORK=${NETWORK}`);
     console.log(`  CAMPAIGN_CODE_HASH=${campaign.codeHash}`);
     console.log(`  PLEDGE_CODE_HASH=${pledge.codeHash}`);
+    console.log(`  PLEDGE_LOCK_CODE_HASH=${pledgeLock.codeHash}`);
+    console.log(`  RECEIPT_CODE_HASH=${receipt.codeHash}`);
   }
 }
 

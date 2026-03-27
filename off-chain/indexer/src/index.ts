@@ -19,6 +19,8 @@ async function main() {
   const PLEDGE_CODE_HASH =
     process.env.PLEDGE_CODE_HASH ||
     "0x423442d38b9e1fdfe68d0e878c4003317fe85408e202fd7de776205d289bc924";
+  const RECEIPT_CODE_HASH = process.env.RECEIPT_CODE_HASH || "";
+  const PLEDGE_LOCK_CODE_HASH = process.env.PLEDGE_LOCK_CODE_HASH || "";
 
   console.log("Starting Campaign Indexer...");
   console.log(`RPC URL: ${RPC_URL}`);
@@ -49,14 +51,14 @@ async function main() {
   // Initial indexing
   console.log("\nPerforming initial indexing...");
   try {
-    const result = await indexer.indexAll(CAMPAIGN_CODE_HASH, PLEDGE_CODE_HASH);
-    console.log(`Indexed ${result.campaigns} campaigns and ${result.pledges} pledges`);
+    const result = await indexer.indexAll(CAMPAIGN_CODE_HASH, PLEDGE_CODE_HASH, RECEIPT_CODE_HASH || undefined, PLEDGE_LOCK_CODE_HASH || undefined);
+    console.log(`Indexed ${result.campaigns} campaigns, ${result.pledges} pledges, and ${result.receipts} receipts`);
   } catch (error) {
     console.error("Error during initial indexing:", error);
   }
 
   // Start background polling
-  indexer.startBackgroundIndexing(CAMPAIGN_CODE_HASH, PLEDGE_CODE_HASH, POLL_INTERVAL);
+  indexer.startBackgroundIndexing(CAMPAIGN_CODE_HASH, PLEDGE_CODE_HASH, POLL_INTERVAL, RECEIPT_CODE_HASH || undefined, PLEDGE_LOCK_CODE_HASH || undefined);
 
   console.log("\nIndexer is ready!");
   console.log(`API available at http://localhost:${PORT}`);

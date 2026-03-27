@@ -56,6 +56,7 @@ export class IndexerAPI {
             txHash: c.txHash,
             index: c.index,
             createdAt: c.createdAt.toString(),
+            receiptCount: this.indexer.getReceiptsForCampaign(c.id).length,
           };
         });
 
@@ -94,6 +95,7 @@ export class IndexerAPI {
           txHash: campaign.txHash,
           index: campaign.index,
           createdAt: campaign.createdAt.toString(),
+          receiptCount: this.indexer.getReceiptsForCampaign(campaign.id).length,
         };
 
         res.json(serialized);
@@ -159,6 +161,66 @@ export class IndexerAPI {
           createdAt: p.createdAt.toString(),
         }));
 
+        res.json(serialized);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get all receipts
+    this.app.get("/receipts", async (req, res) => {
+      try {
+        const receipts = this.indexer.getReceipts();
+        const serialized = receipts.map((r) => ({
+          receiptId: r.id,
+          campaignId: r.campaignId,
+          backer: r.backerLockHash,
+          pledgeAmount: r.pledgeAmount.toString(),
+          status: r.status,
+          txHash: r.txHash,
+          index: r.index,
+          createdAt: r.createdAt.toString(),
+        }));
+        res.json(serialized);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get receipts for a specific backer
+    this.app.get("/receipts/backer/:lockHash", async (req, res) => {
+      try {
+        const receipts = this.indexer.getReceiptsForBacker(req.params.lockHash);
+        const serialized = receipts.map((r) => ({
+          receiptId: r.id,
+          campaignId: r.campaignId,
+          backer: r.backerLockHash,
+          pledgeAmount: r.pledgeAmount.toString(),
+          status: r.status,
+          txHash: r.txHash,
+          index: r.index,
+          createdAt: r.createdAt.toString(),
+        }));
+        res.json(serialized);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get receipts for a specific campaign
+    this.app.get("/receipts/campaign/:campaignId", async (req, res) => {
+      try {
+        const receipts = this.indexer.getReceiptsForCampaign(req.params.campaignId);
+        const serialized = receipts.map((r) => ({
+          receiptId: r.id,
+          campaignId: r.campaignId,
+          backer: r.backerLockHash,
+          pledgeAmount: r.pledgeAmount.toString(),
+          status: r.status,
+          txHash: r.txHash,
+          index: r.index,
+          createdAt: r.createdAt.toString(),
+        }));
         res.json(serialized);
       } catch (error: any) {
         res.status(500).json({ error: error.message });

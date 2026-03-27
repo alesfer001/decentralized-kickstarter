@@ -1,6 +1,6 @@
 import { ccc } from "@ckb-ccc/core";
-import { CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams } from "./types";
-import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize } from "./serializer";
+import { CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams, CreatePledgeWithReceiptParams, PermissionlessReleaseParams, PermissionlessRefundParams, MergeContributionsParams } from "./types";
+import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize, serializeReceiptData, serializePledgeLockArgs } from "./serializer";
 import { createCkbClient, NetworkType } from "./ckbClient";
 
 /**
@@ -10,11 +10,21 @@ export class TransactionBuilder {
   private client: ccc.Client;
   private campaignContract: ContractInfo;
   private pledgeContract: ContractInfo;
+  private pledgeLockContract: ContractInfo;
+  private receiptContract: ContractInfo;
 
-  constructor(client: ccc.Client, campaignContract: ContractInfo, pledgeContract: ContractInfo) {
+  constructor(
+    client: ccc.Client,
+    campaignContract: ContractInfo,
+    pledgeContract: ContractInfo,
+    pledgeLockContract: ContractInfo,
+    receiptContract: ContractInfo
+  ) {
     this.client = client;
     this.campaignContract = campaignContract;
     this.pledgeContract = pledgeContract;
+    this.pledgeLockContract = pledgeLockContract;
+    this.receiptContract = receiptContract;
   }
 
   /**
@@ -357,6 +367,368 @@ export class TransactionBuilder {
   }
 
   /**
+   * Create a pledge with receipt (v1.1 trustless model)
+   * Produces: [0] pledge cell with custom pledge lock, [1] receipt cell owned by backer
+   */
+  async createPledgeWithReceipt(signer: ccc.Signer, params: CreatePledgeWithReceiptParams): Promise<string> {
+    console.log("Building create pledge with receipt transaction...");
+
+    // Serialize pledge cell data (72 bytes): campaign_id + backer_lock_hash + amount
+    const pledgeData = serializePledgeData({
+      campaignId: params.campaignId,
+      backerLockHash: params.backerLockHash,
+      amount: params.amount,
+    });
+
+    // Serialize receipt cell data (40 bytes): pledge_amount + backer_lock_hash
+    const receiptData = serializeReceiptData(params.amount, params.backerLockHash);
+
+    // Serialize pledge lock args (72 bytes): campaign_type_script_hash + deadline + backer_lock_hash
+    const pledgeLockArgs = serializePledgeLockArgs(
+      params.campaignTypeScriptHash,
+      params.deadlineBlock,
+      params.backerLockHash
+    );
+
+    // Calculate capacities
+    const pledgeDataSize = 72;
+    const pledgeBaseCapacity = calculateCellCapacity(pledgeDataSize, true, 65);
+    const pledgeTotalCapacity = pledgeBaseCapacity + params.amount;
+
+    const receiptDataSize = 40;
+    const receiptCapacity = calculateCellCapacity(receiptDataSize, true, 65);
+
+    // Get backer's lock script (backer owns the receipt cell)
+    const backerAddress = await signer.getRecommendedAddress();
+    const backerLockScript = (await ccc.Address.fromString(backerAddress, this.client)).script;
+
+    console.log(`  Pledge capacity: ${pledgeTotalCapacity} shannons`);
+    console.log(`  Receipt capacity: ${receiptCapacity} shannons`);
+
+    // Build the transaction
+    const tx = ccc.Transaction.from({
+      outputs: [
+        {
+          // [0] Pledge cell with custom pledge lock
+          capacity: pledgeTotalCapacity,
+          lock: {
+            codeHash: this.pledgeLockContract.codeHash,
+            hashType: this.pledgeLockContract.hashType,
+            args: pledgeLockArgs,
+          },
+          type: {
+            codeHash: this.pledgeContract.codeHash,
+            hashType: this.pledgeContract.hashType,
+            args: "0x",
+          },
+        },
+        {
+          // [1] Receipt cell owned by backer
+          capacity: receiptCapacity,
+          lock: backerLockScript,
+          type: {
+            codeHash: this.receiptContract.codeHash,
+            hashType: this.receiptContract.hashType,
+            args: "0x",
+          },
+        },
+      ],
+      outputsData: [pledgeData, receiptData],
+      cellDeps: [
+        {
+          outPoint: {
+            txHash: this.pledgeContract.txHash,
+            index: this.pledgeContract.index,
+          },
+          depType: "code",
+        },
+        {
+          outPoint: {
+            txHash: this.pledgeLockContract.txHash,
+            index: this.pledgeLockContract.index,
+          },
+          depType: "code",
+        },
+        {
+          outPoint: {
+            txHash: this.receiptContract.txHash,
+            index: this.receiptContract.index,
+          },
+          depType: "code",
+        },
+        {
+          // Campaign cell as cell_dep (receipt script may verify pledge context)
+          outPoint: {
+            txHash: params.campaignOutPoint.txHash,
+            index: params.campaignOutPoint.index,
+          },
+          depType: "code",
+        },
+      ],
+    });
+
+    // Complete inputs and fee (backer's cells)
+    await tx.completeInputsByCapacity(signer);
+    await tx.completeFeeBy(signer, 1000);
+
+    console.log("Signing pledge with receipt transaction...");
+    const txHash = await signer.sendTransaction(tx);
+    console.log(`Pledge with receipt created! TX: ${txHash}`);
+
+    return txHash;
+  }
+
+  /**
+   * Permissionless release: anyone triggers after deadline when campaign succeeded.
+   * Pledge lock routes funds to creator's lock script.
+   * The signer only provides fee cells -- the pledge cell is an explicit input.
+   */
+  async permissionlessRelease(signer: ccc.Signer, params: PermissionlessReleaseParams): Promise<string> {
+    console.log("Building permissionless release transaction...");
+
+    // Since value: absolute block number for deadline enforcement
+    const sinceValue = params.deadlineBlock;
+
+    // Build the transaction
+    const tx = ccc.Transaction.from({
+      inputs: [
+        {
+          // Pledge cell with custom pledge lock (explicit input, not from signer)
+          previousOutput: {
+            txHash: params.pledgeOutPoint.txHash,
+            index: params.pledgeOutPoint.index,
+          },
+          since: sinceValue,
+        },
+      ],
+      outputs: [
+        {
+          // Creator receives the pledge funds
+          capacity: params.pledgeCapacity,
+          lock: {
+            codeHash: params.creatorLockScript.codeHash,
+            hashType: params.creatorLockScript.hashType as "type" | "data" | "data1" | "data2",
+            args: params.creatorLockScript.args,
+          },
+        },
+      ],
+      outputsData: ["0x"],
+      cellDeps: [
+        {
+          // Campaign cell (status = Success, for pledge lock verification)
+          outPoint: {
+            txHash: params.campaignCellDep.txHash,
+            index: params.campaignCellDep.index,
+          },
+          depType: "code",
+        },
+        {
+          outPoint: {
+            txHash: this.pledgeLockContract.txHash,
+            index: this.pledgeLockContract.index,
+          },
+          depType: "code",
+        },
+        {
+          outPoint: {
+            txHash: this.pledgeContract.txHash,
+            index: this.pledgeContract.index,
+          },
+          depType: "code",
+        },
+      ],
+    });
+
+    // Signer provides fee cells only
+    await tx.completeFeeBy(signer, 1000);
+
+    console.log("Signing permissionless release transaction...");
+    const txHash = await signer.sendTransaction(tx);
+    console.log(`Permissionless release completed! TX: ${txHash}`);
+
+    return txHash;
+  }
+
+  /**
+   * Permissionless refund: triggered after deadline when campaign failed.
+   * Pledge lock routes funds to backer. Receipt cell is consumed to prove backer identity.
+   * The signer provides fee cells and signs for the receipt cell (backer must be the signer).
+   */
+  async permissionlessRefund(signer: ccc.Signer, params: PermissionlessRefundParams): Promise<string> {
+    console.log("Building permissionless refund transaction...");
+
+    // Since value for pledge cell: absolute block number >= deadline
+    const sinceValue = params.deadlineBlock;
+
+    // Total capacity returned to backer: pledge capacity + receipt capacity
+    const backerOutputCapacity = params.pledgeCapacity + params.receiptCapacity;
+
+    // Build cell deps
+    const cellDeps: Array<{ outPoint: { txHash: string; index: number }; depType: "code" | "depGroup" }> = [
+      {
+        outPoint: {
+          txHash: this.pledgeLockContract.txHash,
+          index: this.pledgeLockContract.index,
+        },
+        depType: "code",
+      },
+      {
+        outPoint: {
+          txHash: this.pledgeContract.txHash,
+          index: this.pledgeContract.index,
+        },
+        depType: "code",
+      },
+      {
+        outPoint: {
+          txHash: this.receiptContract.txHash,
+          index: this.receiptContract.index,
+        },
+        depType: "code",
+      },
+    ];
+
+    // Campaign cell_dep is optional (fail-safe refund works without it)
+    if (params.campaignCellDep) {
+      cellDeps.push({
+        outPoint: {
+          txHash: params.campaignCellDep.txHash,
+          index: params.campaignCellDep.index,
+        },
+        depType: "code",
+      });
+    }
+
+    // Build the transaction
+    const tx = ccc.Transaction.from({
+      inputs: [
+        {
+          // Pledge cell (custom pledge lock)
+          previousOutput: {
+            txHash: params.pledgeOutPoint.txHash,
+            index: params.pledgeOutPoint.index,
+          },
+          since: sinceValue,
+        },
+        {
+          // Receipt cell (backer's secp256k1 lock -- signer must be backer)
+          previousOutput: {
+            txHash: params.receiptOutPoint.txHash,
+            index: params.receiptOutPoint.index,
+          },
+        },
+      ],
+      outputs: [
+        {
+          // Backer receives refund
+          capacity: backerOutputCapacity,
+          lock: {
+            codeHash: params.backerLockScript.codeHash,
+            hashType: params.backerLockScript.hashType as "type" | "data" | "data1" | "data2",
+            args: params.backerLockScript.args,
+          },
+        },
+      ],
+      outputsData: ["0x"],
+      cellDeps,
+    });
+
+    // Signer provides fee cells (backer is the signer)
+    await tx.completeFeeBy(signer, 1000);
+
+    console.log("Signing permissionless refund transaction...");
+    const txHash = await signer.sendTransaction(tx);
+    console.log(`Permissionless refund completed! TX: ${txHash}`);
+
+    return txHash;
+  }
+
+  /**
+   * Merge N pledge cells into 1 (same backer, same campaign)
+   * All pledge cells must have identical pledge lock args.
+   * Since=0 means merge is allowed before deadline.
+   */
+  async mergeContributions(signer: ccc.Signer, params: MergeContributionsParams): Promise<string> {
+    console.log(`Building merge contributions transaction (${params.pledgeOutPoints.length} inputs)...`);
+
+    if (params.pledgeOutPoints.length < 2) {
+      throw new Error("Merge requires at least 2 pledge cells");
+    }
+    if (params.pledgeOutPoints.length !== params.pledgeCapacities.length) {
+      throw new Error("pledgeOutPoints and pledgeCapacities must have the same length");
+    }
+
+    // All inputs: pledge cells with since=0 (before-deadline merge path)
+    const inputs = params.pledgeOutPoints.map((outPoint) => ({
+      previousOutput: {
+        txHash: outPoint.txHash,
+        index: outPoint.index,
+      },
+      since: BigInt(0),
+    }));
+
+    // Sum all capacities for the merged output
+    const totalCapacity = params.pledgeCapacities.reduce((sum, cap) => sum + cap, BigInt(0));
+
+    // Serialize merged pledge data
+    const mergedPledgeData = serializePledgeData({
+      campaignId: params.campaignId,
+      backerLockHash: params.backerLockHash,
+      amount: params.totalAmount,
+    });
+
+    console.log(`  Total capacity: ${totalCapacity} shannons`);
+    console.log(`  Total amount: ${params.totalAmount} shannons`);
+
+    // Build the transaction
+    const tx = ccc.Transaction.from({
+      inputs,
+      outputs: [
+        {
+          // Merged pledge cell: same lock and type as inputs
+          capacity: totalCapacity,
+          lock: {
+            codeHash: this.pledgeLockContract.codeHash,
+            hashType: this.pledgeLockContract.hashType,
+            args: params.pledgeLockArgs,
+          },
+          type: {
+            codeHash: this.pledgeContract.codeHash,
+            hashType: this.pledgeContract.hashType,
+            args: "0x",
+          },
+        },
+      ],
+      outputsData: [mergedPledgeData],
+      cellDeps: [
+        {
+          outPoint: {
+            txHash: this.pledgeLockContract.txHash,
+            index: this.pledgeLockContract.index,
+          },
+          depType: "code",
+        },
+        {
+          outPoint: {
+            txHash: this.pledgeContract.txHash,
+            index: this.pledgeContract.index,
+          },
+          depType: "code",
+        },
+      ],
+    });
+
+    // Signer provides fee cells
+    await tx.completeFeeBy(signer, 1000);
+
+    console.log("Signing merge contributions transaction...");
+    const txHash = await signer.sendTransaction(tx);
+    console.log(`Pledge cells merged! TX: ${txHash}`);
+
+    return txHash;
+  }
+
+  /**
    * Helper: Get lock hash from address
    */
   async getLockHashFromAddress(address: string): Promise<string> {
@@ -397,12 +769,16 @@ export class TransactionBuilder {
  * @param rpcUrl - RPC URL for the CKB node
  * @param campaignContract - Campaign contract info
  * @param pledgeContract - Pledge contract info
+ * @param pledgeLockContract - Pledge lock contract info (v1.1)
+ * @param receiptContract - Receipt contract info (v1.1)
  * @param network - Network type: "devnet" | "testnet" | "mainnet" (default: auto-detect from rpcUrl)
  */
 export function createTransactionBuilder(
   rpcUrl: string,
   campaignContract: ContractInfo,
   pledgeContract: ContractInfo,
+  pledgeLockContract: ContractInfo,
+  receiptContract: ContractInfo,
   network?: NetworkType
 ): TransactionBuilder {
   // Auto-detect network if not explicitly specified
@@ -411,5 +787,5 @@ export function createTransactionBuilder(
   );
 
   const client = createCkbClient(resolvedNetwork, rpcUrl);
-  return new TransactionBuilder(client, campaignContract, pledgeContract);
+  return new TransactionBuilder(client, campaignContract, pledgeContract, pledgeLockContract, receiptContract);
 }

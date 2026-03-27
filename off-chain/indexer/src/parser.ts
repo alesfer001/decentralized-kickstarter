@@ -168,6 +168,44 @@ function hexToU64LE(hex: string): bigint {
 }
 
 /**
+ * Parse receipt data from cell data bytes
+ * Layout (40 bytes):
+ * - pledge_amount: u64 LE    (bytes 0-7)
+ * - backer_lock_hash: [u8; 32] (bytes 8-39)
+ */
+export function parseReceiptData(hexData: string): { pledgeAmount: bigint; backerLockHash: string } {
+  const data = hexData.startsWith("0x") ? hexData.slice(2) : hexData;
+  if (data.length < 80) {  // 40 bytes = 80 hex chars
+    throw new Error(`Invalid receipt data length: ${data.length}, expected at least 80`);
+  }
+  const pledgeAmount = hexToU64LE(data.slice(0, 16));
+  const backerLockHash = "0x" + data.slice(16, 80);
+  return { pledgeAmount, backerLockHash };
+}
+
+/**
+ * Parse pledge lock args
+ * Layout (72 bytes):
+ * - campaign_type_script_hash: [u8; 32] (bytes 0-31)
+ * - deadline_block: u64 LE              (bytes 32-39)
+ * - backer_lock_hash: [u8; 32]          (bytes 40-71)
+ */
+export function parsePledgeLockArgs(hexArgs: string): {
+  campaignTypeScriptHash: string;
+  deadlineBlock: bigint;
+  backerLockHash: string;
+} {
+  const data = hexArgs.startsWith("0x") ? hexArgs.slice(2) : hexArgs;
+  if (data.length < 144) {  // 72 bytes = 144 hex chars
+    throw new Error(`Invalid pledge lock args length: ${data.length}, expected at least 144`);
+  }
+  const campaignTypeScriptHash = "0x" + data.slice(0, 64);
+  const deadlineBlock = hexToU64LE(data.slice(64, 80));
+  const backerLockHash = "0x" + data.slice(80, 144);
+  return { campaignTypeScriptHash, deadlineBlock, backerLockHash };
+}
+
+/**
  * Convert u64 bigint to little-endian hex string
  */
 export function u64ToHexLE(value: bigint): string {

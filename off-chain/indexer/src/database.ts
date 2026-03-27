@@ -30,6 +30,18 @@ export interface DBPledge {
   created_at: string;
 }
 
+export interface DBReceipt {
+  id: string;
+  tx_hash: string;
+  output_index: number;
+  campaign_id: string;
+  backer_lock_hash: string;
+  pledge_amount: string;
+  status: string;
+  block_number: string;
+  created_at: string;
+}
+
 /**
  * SQLite database wrapper for indexer persistence
  */
@@ -79,6 +91,21 @@ export class Database {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS receipts (
+        id TEXT PRIMARY KEY,
+        tx_hash TEXT NOT NULL,
+        output_index INTEGER NOT NULL,
+        campaign_id TEXT NOT NULL,
+        backer_lock_hash TEXT NOT NULL,
+        pledge_amount TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'live',
+        block_number TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_receipts_campaign ON receipts(campaign_id);
+      CREATE INDEX IF NOT EXISTS idx_receipts_backer ON receipts(backer_lock_hash);
+
       CREATE TABLE IF NOT EXISTS indexer_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -105,7 +132,7 @@ export class Database {
    * Replace all live cells atomically (matches the clear+rebuild pattern).
    * Deletes all existing rows and inserts the new set in a single transaction.
    */
-  replaceLiveCells(campaigns: DBCampaign[], pledges: DBPledge[]) {
+  replaceLiveCells(campaigns: DBCampaign[], pledges: DBPledge[], receipts: DBReceipt[] = []) {
     const insertCampaign = this.db.prepare(`
       INSERT INTO campaigns (id, tx_hash, output_index, creator_lock_hash, creator_lock_code_hash, creator_lock_hash_type, creator_lock_args, funding_goal, deadline_block, total_pledged, status, title, description, created_at, original_tx_hash)
       VALUES (@id, @tx_hash, @output_index, @creator_lock_hash, @creator_lock_code_hash, @creator_lock_hash_type, @creator_lock_args, @funding_goal, @deadline_block, @total_pledged, @status, @title, @description, @created_at, @original_tx_hash)
@@ -116,15 +143,24 @@ export class Database {
       VALUES (@id, @tx_hash, @output_index, @campaign_id, @backer_lock_hash, @amount, @created_at)
     `);
 
+    const insertReceipt = this.db.prepare(`
+      INSERT INTO receipts (id, tx_hash, output_index, campaign_id, backer_lock_hash, pledge_amount, status, block_number, created_at)
+      VALUES (@id, @tx_hash, @output_index, @campaign_id, @backer_lock_hash, @pledge_amount, @status, @block_number, @created_at)
+    `);
+
     const transaction = this.db.transaction(() => {
       this.db.exec("DELETE FROM campaigns");
       this.db.exec("DELETE FROM pledges");
+      this.db.exec("DELETE FROM receipts");
 
       for (const c of campaigns) {
         insertCampaign.run(c);
       }
       for (const p of pledges) {
         insertPledge.run(p);
+      }
+      for (const r of receipts) {
+        insertReceipt.run(r);
       }
 
       // Store last indexed timestamp
@@ -160,6 +196,24 @@ export class Database {
 
   getAllPledges(): DBPledge[] {
     return this.db.prepare("SELECT * FROM pledges").all() as DBPledge[];
+  }
+
+  getAllReceipts(): DBReceipt[] {
+    return this.db.prepare("SELECT * FROM receipts").all() as DBReceipt[];
+  }
+
+  getReceiptsForCampaign(campaignId: string): DBReceipt[] {
+    const normalizedId = campaignId.toLowerCase();
+    return (this.db.prepare("SELECT * FROM receipts").all() as DBReceipt[]).filter(
+      (r) => r.campaign_id.toLowerCase() === normalizedId
+    );
+  }
+
+  getReceiptsForBacker(lockHash: string): DBReceipt[] {
+    const normalizedHash = lockHash.toLowerCase();
+    return (this.db.prepare("SELECT * FROM receipts").all() as DBReceipt[]).filter(
+      (r) => r.backer_lock_hash.toLowerCase() === normalizedHash
+    );
   }
 
   getState(key: string): string | undefined {
