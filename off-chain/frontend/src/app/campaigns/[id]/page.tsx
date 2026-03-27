@@ -4,8 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ccc } from "@ckb-ccc/connector-react";
-import { Campaign, Pledge, CampaignStatus } from "@/lib/types";
-import { fetchCampaign, fetchPledgesForCampaign, fetchBlockNumber, fetchBackerPledges } from "@/lib/api";
+import { Campaign, Pledge, CampaignStatus, Receipt, PledgeDistributionStatus } from "@/lib/types";
+import { fetchCampaign, fetchPledgesForCampaign, fetchBlockNumber, fetchReceiptsForCampaign } from "@/lib/api";
 import {
   shannonsToCKB,
   ckbToShannons,
@@ -16,8 +16,12 @@ import {
   blocksToTimeEstimate,
   blockToRelativeTime,
   getUniqueBackerCount,
+  getPledgeDistributionLabel,
+  getPledgeDistributionColor,
+  getExplorerTxUrl,
+  getDistributionSummary,
 } from "@/lib/utils";
-import { CONTRACTS, PLEDGE_DATA_SIZE, DEVNET_ACCOUNTS, IS_DEVNET } from "@/lib/constants";
+import { CONTRACTS, PLEDGE_DATA_SIZE, EXPLORER_URL } from "@/lib/constants";
 import { u64ToHexLE, serializeMetadataHex } from "@/lib/serialization";
 import { useDevnet } from "@/components/DevnetContext";
 import { useToast } from "@/components/Toast";
@@ -38,6 +42,7 @@ export default function CampaignDetailPage() {
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [pledges, setPledges] = useState<Pledge[]>([]);
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +57,6 @@ export default function CampaignDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [actionTxHash, setActionTxHash] = useState<string | null>(null);
   const [walletLockHash, setWalletLockHash] = useState<string | null>(null);
-  const [userPledges, setUserPledges] = useState<Pledge[]>([]);
 
   // UI state
   const [showCampaignId, setShowCampaignId] = useState(false);
@@ -65,7 +69,6 @@ export default function CampaignDetailPage() {
     async function getWalletInfo() {
       if (!signer) {
         setWalletLockHash(null);
-        setUserPledges([]);
         return;
       }
       try {
@@ -81,27 +84,16 @@ export default function CampaignDetailPage() {
     getWalletInfo();
   }, [signer]);
 
-  // Fetch user pledges when wallet lock hash or campaign changes
-  useEffect(() => {
-    if (!walletLockHash || !campaign) {
-      setUserPledges([]);
-      return;
-    }
-    const myPledges = pledges.filter(
-      (p) => p.backer.toLowerCase() === walletLockHash.toLowerCase()
-    );
-    setUserPledges(myPledges);
-  }, [walletLockHash, pledges, campaign]);
-
   const loadData = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     if (!isRefresh) setError(null);
 
     try {
-      const [campaignData, pledgesData, blockNum] = await Promise.all([
+      const [campaignData, pledgesData, blockNum, receiptsData] = await Promise.all([
         fetchCampaign(campaignId),
         fetchPledgesForCampaign(campaignId),
         fetchBlockNumber(),
+        fetchReceiptsForCampaign(campaignId).catch(() => [] as Receipt[]),
       ]);
 
       if (!campaignData) {
@@ -110,6 +102,7 @@ export default function CampaignDetailPage() {
         setCampaign(campaignData);
         setPledges(pledgesData);
         setCurrentBlock(blockNum);
+        setReceipts(receiptsData);
       }
     } catch (err) {
       if (!isRefresh) {
@@ -349,142 +342,6 @@ export default function CampaignDetailPage() {
     }
   }
 
-  async function handleRefund(pledge: Pledge) {
-    if (!signer) return;
-    setActionLoading(true);
-    setActionTxHash(null);
-
-    try {
-      const address = await signer.getRecommendedAddress();
-      const client = signer.client;
-      const lockScript = (await ccc.Address.fromString(address, client)).script;
-
-      const [txHash, indexStr] = pledge.pledgeId.split("_");
-
-      const pledgeCapacity = BigInt(Math.ceil((8 + PLEDGE_DATA_SIZE + 65 + 65) * 1.2)) * BigInt(100000000) + BigInt(pledge.amount);
-
-      const tx = ccc.Transaction.from({
-        inputs: [
-          {
-            previousOutput: {
-              txHash: txHash,
-              index: parseInt(indexStr),
-            },
-          },
-        ],
-        outputs: [
-          {
-            capacity: pledgeCapacity,
-            lock: lockScript,
-          },
-        ],
-        outputsData: ["0x"],
-        cellDeps: [
-          {
-            outPoint: {
-              txHash: CONTRACTS.pledge.txHash,
-              index: CONTRACTS.pledge.index,
-            },
-            depType: "code",
-          },
-        ],
-      });
-
-      await tx.completeFeeBy(signer, 1000);
-      const hash = await signer.sendTransaction(tx);
-      setActionTxHash(hash);
-      toast("success", "Refund submitted!");
-
-      // Poll until the pledge disappears
-      const pledgeId = pledge.pledgeId;
-      await pollForChange(async () => {
-        const newPledges = await fetchPledgesForCampaign(campaignId);
-        if (!newPledges.find((p) => p.pledgeId === pledgeId)) {
-          setPledges(newPledges);
-          return true;
-        }
-        return false;
-      });
-    } catch (err) {
-      console.error("Failed to refund pledge:", err);
-      const msg = err instanceof Error ? err.message : "Failed to refund pledge";
-      if (msg.includes("rejected") || msg.includes("disconnected")) {
-        toast("warning", "Transaction was cancelled");
-      } else {
-        toast("error", msg);
-      }
-    } finally {
-      setActionLoading(false);
-    }
-  }
-
-  async function handleRelease(pledge: Pledge) {
-    if (!signer || !campaign) return;
-    setActionLoading(true);
-    setActionTxHash(null);
-
-    try {
-      const creatorLockScript = await resolveCreatorLockScript(campaign, signer.client);
-
-      const [txHash, indexStr] = pledge.pledgeId.split("_");
-
-      const pledgeCapacity = BigInt(Math.ceil((8 + PLEDGE_DATA_SIZE + 65 + 65) * 1.2)) * BigInt(100000000) + BigInt(pledge.amount);
-
-      const tx = ccc.Transaction.from({
-        inputs: [
-          {
-            previousOutput: {
-              txHash: txHash,
-              index: parseInt(indexStr),
-            },
-          },
-        ],
-        outputs: [
-          {
-            capacity: pledgeCapacity,
-            lock: creatorLockScript,
-          },
-        ],
-        outputsData: ["0x"],
-        cellDeps: [
-          {
-            outPoint: {
-              txHash: CONTRACTS.pledge.txHash,
-              index: CONTRACTS.pledge.index,
-            },
-            depType: "code",
-          },
-        ],
-      });
-
-      await tx.completeFeeBy(signer, 1000);
-      const hash = await signer.sendTransaction(tx);
-      setActionTxHash(hash);
-      toast("success", "Release submitted!");
-
-      // Poll until the pledge disappears
-      const pledgeId = pledge.pledgeId;
-      await pollForChange(async () => {
-        const newPledges = await fetchPledgesForCampaign(campaignId);
-        if (!newPledges.find((p) => p.pledgeId === pledgeId)) {
-          setPledges(newPledges);
-          return true;
-        }
-        return false;
-      });
-    } catch (err) {
-      console.error("Failed to release pledge:", err);
-      const msg = err instanceof Error ? err.message : "Failed to release pledge to creator";
-      if (msg.includes("rejected") || msg.includes("disconnected")) {
-        toast("warning", "Transaction was cancelled");
-      } else {
-        toast("error", msg);
-      }
-    } finally {
-      setActionLoading(false);
-    }
-  }
-
   async function handleDestroy() {
     if (!signer || !campaign) return;
     setActionLoading(true);
@@ -605,12 +462,17 @@ export default function CampaignDetailPage() {
         : "active")
       : campaign.status === CampaignStatus.Success ? "success" : "failed"
   );
-  const isFailed = effectiveStatus === "failed" || effectiveStatus === "expired_failed";
-  const isSuccess = effectiveStatus === "success" || effectiveStatus === "expired_success";
   const blocksRemaining = currentBlock !== null
     ? BigInt(campaign.deadlineBlock) - currentBlock
     : null;
   const backerCount = getUniqueBackerCount(pledges);
+
+  /** Derive distribution counts from receipts and live pledges */
+  const receiptCount = receipts.length;
+  const livePledgeCount = pledges.length;
+  const distributedCount = Math.max(0, receiptCount - livePledgeCount);
+  const releasedCount = (campaign?.status === CampaignStatus.Success) ? distributedCount : 0;
+  const refundedCount = (campaign?.status === CampaignStatus.Failed) ? distributedCount : 0;
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -860,8 +722,21 @@ export default function CampaignDetailPage() {
             </div>
           )}
 
+          {/* Distribution Status (v1.1) */}
+          {campaign.status !== CampaignStatus.Active && (
+            <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
+              <h2 className="text-lg font-semibold mb-2">Distribution Status</h2>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                {getDistributionSummary(receiptCount, releasedCount, refundedCount, effectiveStatus)}
+              </p>
+              <p className="text-xs text-zinc-500 mt-1">
+                v1.1: Fund distribution is automatic and permissionless. Anyone can trigger release/refund transactions.
+              </p>
+            </div>
+          )}
+
           {/* Actions Section */}
-          {signer && (needsFinalization || userPledges.length > 0 || (isCreator && campaign.status !== CampaignStatus.Active && pledges.length === 0)) && (
+          {signer && (needsFinalization || (isCreator && campaign.status !== CampaignStatus.Active && pledges.length === 0)) && (
             <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
               <h2 className="text-lg font-semibold mb-4">Actions</h2>
 
@@ -876,13 +751,13 @@ export default function CampaignDetailPage() {
                 </div>
               )}
 
-              {needsFinalization && isCreator && (
+              {needsFinalization && (
                 <div className="mb-4">
                   <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                     This campaign has expired and needs to be finalized on-chain.
                     {BigInt(campaign.totalPledged) >= BigInt(campaign.fundingGoal)
-                      ? " The funding goal was met -- it will be marked as Successful."
-                      : " The funding goal was not met -- it will be marked as Failed."}
+                      ? " The funding goal was met -- it will be marked as Successful. Funds will be automatically released to the creator."
+                      : " The funding goal was not met -- it will be marked as Failed. Funds will be automatically refunded to backers."}
                   </p>
                   <button
                     onClick={handleFinalize}
@@ -891,54 +766,6 @@ export default function CampaignDetailPage() {
                   >
                     {actionLoading ? "Finalizing..." : "Finalize Campaign"}
                   </button>
-                </div>
-              )}
-
-              {userPledges.length > 0 && (isFailed || isSuccess) && (
-                <div>
-                  <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3">
-                    Your Pledges
-                  </h3>
-                  <div className="space-y-3">
-                    {userPledges.map((pledge) => (
-                      <div
-                        key={pledge.pledgeId}
-                        className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-900 rounded-lg"
-                      >
-                        <div>
-                          <p className="font-medium">
-                            {shannonsToCKB(pledge.amount)} CKB
-                          </p>
-                          <p className="text-xs text-zinc-500 font-mono">
-                            {formatHash(pledge.txHash)}
-                          </p>
-                        </div>
-                        {isFailed && campaign.status !== CampaignStatus.Active && (
-                          <button
-                            onClick={() => handleRefund(pledge)}
-                            disabled={actionLoading}
-                            className="px-4 py-2 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
-                          >
-                            {actionLoading ? "..." : "Claim Refund"}
-                          </button>
-                        )}
-                        {isSuccess && campaign.status !== CampaignStatus.Active && (
-                          <button
-                            onClick={() => handleRelease(pledge)}
-                            disabled={actionLoading}
-                            className="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
-                          >
-                            {actionLoading ? "..." : "Release to Creator"}
-                          </button>
-                        )}
-                        {campaign.status === CampaignStatus.Active && needsFinalization && (
-                          <span className="text-xs text-zinc-500">
-                            Finalize campaign first
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
 
@@ -1002,29 +829,56 @@ export default function CampaignDetailPage() {
               </p>
             ) : (
               <div className="space-y-3">
-                {sortedPledges.map((pledge) => (
-                  <div
-                    key={pledge.pledgeId}
-                    className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-900 rounded-lg"
-                  >
-                    <div>
-                      <p className="font-mono text-sm">
-                        {formatHash(pledge.backer)}
-                      </p>
-                      <p className="text-xs text-zinc-500">
-                        Block #{pledge.createdAt}
-                        {currentBlock !== null && (
-                          <span className="ml-1">
-                            ({blockToRelativeTime(pledge.createdAt, currentBlock)})
+                {sortedPledges.map((pledge) => {
+                  const receipt = receipts.find(
+                    (r) => r.backer.toLowerCase() === pledge.backer.toLowerCase()
+                  );
+                  return (
+                    <div
+                      key={pledge.pledgeId}
+                      className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-900 rounded-lg"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-mono text-sm truncate">
+                            {formatHash(pledge.backer)}
+                          </p>
+                          <span className={`px-2 py-0.5 text-xs font-medium rounded ${getPledgeDistributionColor("locked")}`}>
+                            {getPledgeDistributionLabel("locked")}
                           </span>
+                        </div>
+                        <p className="text-xs text-zinc-500">
+                          Block #{pledge.createdAt}
+                          {currentBlock !== null && (
+                            <span className="ml-1">
+                              ({blockToRelativeTime(pledge.createdAt, currentBlock)})
+                            </span>
+                          )}
+                        </p>
+                        {receipt && (
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-zinc-500">
+                              Receipt: {shannonsToCKB(receipt.pledgeAmount)} CKB
+                            </span>
+                            {EXPLORER_URL && (
+                              <a
+                                href={getExplorerTxUrl(EXPLORER_URL, receipt.txHash)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:underline"
+                              >
+                                View on Explorer
+                              </a>
+                            )}
+                          </div>
                         )}
+                      </div>
+                      <p className="font-medium whitespace-nowrap ml-2">
+                        {shannonsToCKB(pledge.amount)} CKB
                       </p>
                     </div>
-                    <p className="font-medium">
-                      {shannonsToCKB(pledge.amount)} CKB
-                    </p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1032,41 +886,4 @@ export default function CampaignDetailPage() {
       </div>
     </div>
   );
-}
-
-/**
- * Resolve the creator's lock script for the "Release to Creator" transaction.
- *
- * 1. Use creatorLockScript from the indexer API (works on all networks).
- * 2. Fallback: match lock hash against known devnet accounts (devnet only).
- */
-async function resolveCreatorLockScript(
-  campaign: Campaign,
-  client: any
-): Promise<{ codeHash: string; hashType: string; args: string }> {
-  // Prefer the lock script provided by the indexer
-  if (campaign.creatorLockScript) {
-    return campaign.creatorLockScript;
-  }
-
-  // Devnet fallback: match against known test accounts
-  if (IS_DEVNET) {
-    for (const account of DEVNET_ACCOUNTS) {
-      try {
-        const addressObj = await ccc.Address.fromString(account.address, client);
-        const hash = addressObj.script.hash();
-        if (hash.toLowerCase() === campaign.creator.toLowerCase()) {
-          return {
-            codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-            hashType: "type",
-            args: account.lockArg,
-          };
-        }
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  throw new Error("Cannot resolve creator lock script. The indexer may need to re-index.");
 }

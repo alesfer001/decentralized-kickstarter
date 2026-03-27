@@ -1,4 +1,4 @@
-import { CampaignStatus, Pledge } from "./types";
+import { CampaignStatus, Pledge, PledgeDistributionStatus } from "./types";
 
 /**
  * Convert shannons to CKB (1 CKB = 10^8 shannons)
@@ -152,4 +152,73 @@ export function getUniqueBackerCount(pledges: Pledge[]): number {
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength) + "...";
+}
+
+/**
+ * Get display label for pledge distribution status (v1.1)
+ */
+export function getPledgeDistributionLabel(status: PledgeDistributionStatus): string {
+  switch (status) {
+    case "locked":
+      return "Locked";
+    case "releasing":
+      return "Releasing...";
+    case "released":
+      return "Released";
+    case "refunded":
+      return "Refunded";
+    default:
+      return "Unknown";
+  }
+}
+
+/**
+ * Get Tailwind badge classes for pledge distribution status (v1.1)
+ */
+export function getPledgeDistributionColor(status: PledgeDistributionStatus): string {
+  switch (status) {
+    case "locked":
+      return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
+    case "releasing":
+      return "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200";
+    case "released":
+      return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
+    case "refunded":
+      return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
+    default:
+      return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
+  }
+}
+
+/**
+ * Build CKB Explorer transaction URL
+ */
+export function getExplorerTxUrl(explorerBase: string, txHash: string): string {
+  if (!explorerBase) return "";
+  return `${explorerBase}/transaction/${txHash}`;
+}
+
+/**
+ * Compute aggregate distribution summary for a campaign
+ * Returns a string like "All pledges released" or "3/5 pledges refunded"
+ */
+export function getDistributionSummary(
+  totalPledges: number,
+  releasedCount: number,
+  refundedCount: number,
+  campaignEffectiveStatus: string
+): string {
+  if (campaignEffectiveStatus === "active") return "Pledges locked until deadline";
+  if (totalPledges === 0) return "No pledges";
+
+  const handledCount = releasedCount + refundedCount;
+  if (handledCount === 0) return "Distribution pending";
+
+  if (releasedCount === totalPledges) return "All pledges released to creator";
+  if (refundedCount === totalPledges) return "All pledges refunded to backers";
+
+  if (releasedCount > 0) return `${releasedCount}/${totalPledges} pledges released`;
+  if (refundedCount > 0) return `${refundedCount}/${totalPledges} pledges refunded`;
+
+  return `${handledCount}/${totalPledges} pledges distributed`;
 }
