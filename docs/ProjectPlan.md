@@ -954,7 +954,62 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - [x] Confirmed core flows work end-to-end with real wallet (JoyID)
 - [x] Feedback aligned with v1.1 roadmap (custom lock script for trustless escrow)
 
-### Phase 15: Grant Application & Launch
+### Phase 15: v1.1 — Trustless Automatic Fund Distribution
+
+#### 15.1: On-Chain Contracts ✓
+- [x] **Pledge Lock Script** (NEW) — Rust lock script enforcing trustless fund routing (330 lines)
+  - 72-byte args: campaign_type_script_hash + deadline + backer_lock_hash
+  - Since-based deadline enforcement (absolute block number)
+  - Campaign cell_dep lookup with type script hash verification
+  - 4 spending paths: release (success), refund (failure), fail-safe refund (no cell_dep), merge
+  - MAX_FEE = 1 CKB prevents pledge draining
+- [x] **Receipt Type Script** (NEW) — Backer proof-of-pledge (208 lines)
+  - 40-byte cell data: pledge_amount + backer_lock_hash
+  - Creation validation alongside matching pledge cell
+  - Destruction validation during refund (amount match)
+- [x] **Campaign Type Script Update** — Added TypeID for unforgeable identity
+  - `check_type_id(0, 32)` as first validation step
+  - CAMP-02 destruction protection documented (off-chain + fail-safe)
+- [x] **Pledge Type Script Update** — Allow merge and partial refund patterns (136 lines added)
+  - Merge: N inputs → 1 output, same campaign, capacity preserved
+  - Partial refund: 1 input → 1 reduced output
+  - Checked arithmetic for overflow safety
+- [x] **Build System** — Updated `build-contracts.sh` for all 4 contracts
+- [x] All 4 contracts compile with `cargo check --features library`
+
+#### 15.2: Off-Chain Integration ✓
+- [x] **Transaction Builder** — 4 new operations in existing builder.ts
+  - `createPledgeWithReceipt` — pledge cell + receipt cell atomically
+  - `permissionlessRelease` — anyone triggers, lock routes to creator
+  - `permissionlessRefund` — consumes pledge + receipt, refunds to backer
+  - `mergeContributions` — N pledge cells into 1
+- [x] **Indexer Updates**
+  - New `receipts` SQLite table with indexes
+  - Receipt cell polling via RECEIPT_CODE_HASH env var
+  - New API endpoints: `/receipts`, `/receipts/backer/:lockHash`, `/receipts/campaign/:campaignId`
+  - Campaign responses include `receiptCount`
+- [x] **Deployment Script** — Extended for all 4 contracts (campaign, pledge, pledge-lock, receipt)
+- [x] **Integration Test** — `test-v1.1-lifecycle.ts` with 3 scenarios (success release, failure refund, merge-then-release)
+
+#### 15.3: Frontend & E2E Testing ✓
+- [x] **Campaign Detail Page Overhaul** — Removed 264 lines of manual release/refund code
+  - Status badges per pledge: Locked (gray), Releasing (amber), Released (green), Refunded (blue)
+  - Receipt info inline with explorer links
+  - Distribution status banner (aggregate)
+  - No manual release/refund buttons
+- [x] **New Types & API** — `PledgeDistributionStatus`, `Receipt` interface, receipt API functions
+- [x] **Utilities** — Distribution status labels/colors, explorer URL helper
+- [x] **E2E Scenarios** — Scenario 6 (trustless distribution UX) + Scenario 7 (receipt display)
+
+#### 15.4: Testnet Deployment (Pending)
+- [ ] Deploy v1.1 contracts to CKB testnet (Pudge) via `scripts/deploy-contracts.ts`
+- [ ] Update Render indexer env vars (CAMPAIGN_CODE_HASH, PLEDGE_CODE_HASH, RECEIPT_CODE_HASH, PLEDGE_LOCK_CODE_HASH)
+- [ ] Redeploy Vercel frontend with updated env vars
+- [ ] Run `test-v1.1-lifecycle.ts` against testnet
+- [ ] Update Nervos Talk thread with v1.1 progress
+- [ ] External tester validates full v1.1 lifecycle without manual fund routing
+
+### Phase 16: Grant Application & Launch
 - [ ] Deploy to CKB mainnet
 - [ ] Prepare grant proposal for CKB Community Fund DAO
 - [ ] Community building and marketing
@@ -1036,3 +1091,18 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - Created fresh testnet campaign (500 CKB goal) + 200 CKB pledge for live screenshots
 - Saved draft at `docs/NervosTalkPost.md` for reference
 - Note: Discourse new-user restrictions blocked links and screenshots — to be added after trust level upgrade
+
+**2026-03-26:** Community Feedback & Infrastructure
+- Received responses from Ophiuchus (community) and RetricSu (CKB core team) on Nervos Talk
+- RetricSu pointed to joii2020/crowdfunding demo — analyzed for v1.1 lock script design patterns
+- Migrated indexer from Cloudflare tunnel to Render free tier (ckb-kickstarter-indexer.onrender.com)
+- Updated Vercel frontend NEXT_PUBLIC_API_URL to Render, removed ngrok-skip-browser-warning header
+
+**2026-03-26 – 2026-03-27:** Phase 15 — v1.1 Trustless Automatic Fund Distribution
+- Analyzed joii2020/crowdfunding: Contribution-as-Lock-Script pattern, Claim receipt cells, merge design
+- Key design decisions: pledge-as-lock-script, separate receipt cells, fail-safe refund, TypeID, permissionless
+- Phase 15.1 (On-Chain Contracts): 4 Rust contracts — pledge lock (330 lines), receipt type (208 lines), campaign TypeID update, pledge merge update (136 lines)
+- Phase 15.2 (Off-Chain Integration): 4 tx builder operations, indexer receipt tracking, 3 new API endpoints, deployment script, integration test (456 lines)
+- Phase 15.3 (Frontend): Campaign detail page overhaul (-264/+81 lines), status badges, receipt display, 2 E2E scenarios
+- All 20 v1.1 requirements implemented, all contracts compile
+- Remaining: testnet deployment, external validation, Nervos Talk update
