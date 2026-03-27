@@ -21,6 +21,7 @@ export interface Campaign {
   txHash: string;
   index: number;
   createdAt: string;
+  receiptCount?: number;
 }
 
 export enum CampaignStatus {
@@ -37,6 +38,25 @@ export interface Pledge {
   campaignId: string;
   backer: string;
   amount: string;
+  txHash: string;
+  index: number;
+  createdAt: string;
+}
+
+/**
+ * Distribution status for a pledge (v1.1 trustless model)
+ */
+export type PledgeDistributionStatus = "locked" | "releasing" | "released" | "refunded";
+
+/**
+ * Receipt data from the indexer API — proof of pledge for a backer
+ */
+export interface Receipt {
+  receiptId: string;
+  campaignId: string;
+  backer: string;
+  pledgeAmount: string;
+  status: string;
   txHash: string;
   index: number;
   createdAt: string;
