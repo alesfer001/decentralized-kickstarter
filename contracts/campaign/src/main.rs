@@ -20,6 +20,7 @@ use ckb_std::{
     high_level::{load_script, load_cell_data},
     ckb_constants::Source,
     error::SysError,
+    type_id::check_type_id,
 };
 
 /// Error codes
@@ -28,6 +29,7 @@ const ERROR_LOAD_DATA: i8 = 9;
 const ERROR_INVALID_FINALIZATION: i8 = 10;
 #[allow(dead_code)]
 const ERROR_MODIFICATION_NOT_ALLOWED: i8 = 11;
+const ERROR_INVALID_TYPE_ID: i8 = 12;
 
 /// Campaign status enum
 #[repr(u8)]
@@ -174,6 +176,14 @@ fn validate_finalization(old: &CampaignData, new: &CampaignData) -> Result<(), i
 pub fn program_entry() -> i8 {
     debug!("Campaign Type Script running");
 
+    // CAMP-01: Validate TypeID — first 32 bytes of args
+    // On creation: verifies hash matches blake2b(first_input.out_point || output_index)
+    // On update/burn: passes (TypeID rules allow transfer and burn)
+    if let Err(_) = check_type_id(0, 32) {
+        debug!("TypeID validation failed");
+        return ERROR_INVALID_TYPE_ID;
+    }
+
     // Load the script
     let script = match load_script() {
         Ok(script) => script,
@@ -244,9 +254,12 @@ pub fn program_entry() -> i8 {
             0
         }
 
-        // Destruction: has input, no output — allow (lock script guards spending)
+        // Destruction: has input, no output
+        // CAMP-02: Full destruction protection is enforced off-chain (D-09).
+        // The pledge lock script's fail-safe refund (D-06) protects backers
+        // regardless — if campaign cell is destroyed, backers get automatic refund.
         (true, false) => {
-            debug!("Campaign destruction allowed");
+            debug!("Campaign destruction — backers protected by fail-safe refund (D-06)");
             0
         }
 
