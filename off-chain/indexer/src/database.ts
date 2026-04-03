@@ -134,17 +134,17 @@ export class Database {
    */
   replaceLiveCells(campaigns: DBCampaign[], pledges: DBPledge[], receipts: DBReceipt[] = []) {
     const insertCampaign = this.db.prepare(`
-      INSERT INTO campaigns (id, tx_hash, output_index, creator_lock_hash, creator_lock_code_hash, creator_lock_hash_type, creator_lock_args, funding_goal, deadline_block, total_pledged, status, title, description, created_at, original_tx_hash)
+      INSERT OR REPLACE INTO campaigns (id, tx_hash, output_index, creator_lock_hash, creator_lock_code_hash, creator_lock_hash_type, creator_lock_args, funding_goal, deadline_block, total_pledged, status, title, description, created_at, original_tx_hash)
       VALUES (@id, @tx_hash, @output_index, @creator_lock_hash, @creator_lock_code_hash, @creator_lock_hash_type, @creator_lock_args, @funding_goal, @deadline_block, @total_pledged, @status, @title, @description, @created_at, @original_tx_hash)
     `);
 
     const insertPledge = this.db.prepare(`
-      INSERT INTO pledges (id, tx_hash, output_index, campaign_id, backer_lock_hash, amount, created_at)
+      INSERT OR REPLACE INTO pledges (id, tx_hash, output_index, campaign_id, backer_lock_hash, amount, created_at)
       VALUES (@id, @tx_hash, @output_index, @campaign_id, @backer_lock_hash, @amount, @created_at)
     `);
 
     const insertReceipt = this.db.prepare(`
-      INSERT INTO receipts (id, tx_hash, output_index, campaign_id, backer_lock_hash, pledge_amount, status, block_number, created_at)
+      INSERT OR REPLACE INTO receipts (id, tx_hash, output_index, campaign_id, backer_lock_hash, pledge_amount, status, block_number, created_at)
       VALUES (@id, @tx_hash, @output_index, @campaign_id, @backer_lock_hash, @pledge_amount, @status, @block_number, @created_at)
     `);
 
@@ -154,13 +154,13 @@ export class Database {
       this.db.exec("DELETE FROM receipts");
 
       for (const c of campaigns) {
-        insertCampaign.run(c);
+        try { insertCampaign.run(c); } catch (e) { console.error("Failed to insert campaign:", c.id, e); }
       }
       for (const p of pledges) {
-        insertPledge.run(p);
+        try { insertPledge.run(p); } catch (e) { console.error("Failed to insert pledge:", p.id, e); }
       }
       for (const r of receipts) {
-        insertReceipt.run(r);
+        try { insertReceipt.run(r); } catch (e) { console.error("Failed to insert receipt:", r.id, e); }
       }
 
       // Store last indexed timestamp
@@ -204,8 +204,14 @@ export class Database {
 
   getReceiptsForCampaign(campaignId: string): DBReceipt[] {
     const normalizedId = campaignId.toLowerCase();
+    // Campaign IDs from frontend include output index (e.g., "0x...abc_0")
+    // but receipt campaign_id is derived from pledge data (just the 32-byte tx hash).
+    // Strip the "_N" suffix for comparison if present.
+    const txHashOnly = normalizedId.includes("_")
+      ? normalizedId.split("_")[0]
+      : normalizedId;
     return (this.db.prepare("SELECT * FROM receipts").all() as DBReceipt[]).filter(
-      (r) => r.campaign_id.toLowerCase() === normalizedId
+      (r) => r.campaign_id.toLowerCase() === normalizedId || r.campaign_id.toLowerCase() === txHashOnly
     );
   }
 

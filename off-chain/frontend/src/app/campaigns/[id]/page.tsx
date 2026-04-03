@@ -21,7 +21,7 @@ import {
   getExplorerTxUrl,
   getDistributionSummary,
 } from "@/lib/utils";
-import { CONTRACTS, PLEDGE_DATA_SIZE, EXPLORER_URL } from "@/lib/constants";
+import { CONTRACTS, PLEDGE_DATA_SIZE, RECEIPT_DATA_SIZE, EXPLORER_URL } from "@/lib/constants";
 import { u64ToHexLE, serializeMetadataHex } from "@/lib/serialization";
 import { useDevnet } from "@/components/DevnetContext";
 import { useToast } from "@/components/Toast";
@@ -170,7 +170,8 @@ export default function CampaignDetailPage() {
       const address = await signer.getRecommendedAddress();
       const client = signer.client;
       const addressObj = await ccc.Address.fromString(address, client);
-      const backerLockHash = addressObj.script.hash();
+      const backerLockScript = addressObj.script;
+      const backerLockHash = backerLockScript.hash();
 
       const amountShannons = ckbToShannons(amount);
 
@@ -181,37 +182,92 @@ export default function CampaignDetailPage() {
         ? backerLockHash.slice(2)
         : backerLockHash;
 
+      // Get campaign type script hash for pledge lock args
+      const campaignTx = await client.getTransaction("0x" + campaignTxHash);
+      const campaignTypeScript = ccc.Script.from(campaignTx!.transaction!.outputs[0].type!);
+      const campaignTypeScriptHash = campaignTypeScript.hash();
+      const campaignTypeHash = campaignTypeScriptHash.startsWith("0x")
+        ? campaignTypeScriptHash.slice(2)
+        : campaignTypeScriptHash;
+
+      // Pledge cell data (72 bytes): campaign_id + backer_lock_hash + amount
       const pledgeData = "0x" + campaignTxHash + backerHash + u64ToHexLE(amountShannons);
 
-      const baseCapacity = BigInt(Math.ceil((8 + PLEDGE_DATA_SIZE + 65 + 65) * 1.2)) * BigInt(100000000);
-      const totalCapacity = baseCapacity + amountShannons;
+      // Receipt cell data (40 bytes): pledge_amount + backer_lock_hash
+      const receiptData = "0x" + u64ToHexLE(amountShannons) + backerHash;
 
-      const lockScript = addressObj.script;
+      // Pledge lock args (72 bytes): campaign_type_script_hash + deadline_block + backer_lock_hash
+      const deadlineBlock = BigInt(campaign.deadlineBlock);
+      const pledgeLockArgs = "0x" + campaignTypeHash + u64ToHexLE(deadlineBlock) + backerHash;
+
+      // Capacity calculations
+      // Pledge cell: lock script with pledge-lock args (72 bytes) = code_hash(32) + hash_type(1) + args(72) = 105 bytes
+      const pledgeLockSize = 105;
+      const pledgeBaseCapacity = BigInt(Math.ceil((8 + PLEDGE_DATA_SIZE + 65 + pledgeLockSize) * 1.2)) * BigInt(100000000);
+      const pledgeTotalCapacity = pledgeBaseCapacity + amountShannons;
+
+      // Receipt cell: backer's lock (65 bytes) + receipt type script (65 bytes)
+      const receiptCapacity = BigInt(Math.ceil((8 + RECEIPT_DATA_SIZE + 65 + 65) * 1.2)) * BigInt(100000000);
 
       const tx = ccc.Transaction.from({
         outputs: [
           {
-            capacity: totalCapacity,
-            lock: lockScript,
+            // Pledge cell with custom pledge lock
+            capacity: pledgeTotalCapacity,
+            lock: {
+              codeHash: CONTRACTS.pledgeLock.codeHash,
+              hashType: CONTRACTS.pledgeLock.hashType,
+              args: pledgeLockArgs,
+            },
             type: {
               codeHash: CONTRACTS.pledge.codeHash,
               hashType: CONTRACTS.pledge.hashType,
               args: "0x",
             },
           },
+          {
+            // Receipt cell owned by backer
+            capacity: receiptCapacity,
+            lock: backerLockScript,
+            type: {
+              codeHash: CONTRACTS.receipt.codeHash,
+              hashType: CONTRACTS.receipt.hashType,
+              args: "0x",
+            },
+          },
         ],
-        outputsData: [pledgeData],
-        cellDeps: CONTRACTS.pledge.txHash
-          ? [
-              {
-                outPoint: {
-                  txHash: CONTRACTS.pledge.txHash,
-                  index: CONTRACTS.pledge.index,
-                },
-                depType: "code",
-              },
-            ]
-          : [],
+        outputsData: [pledgeData, receiptData],
+        cellDeps: [
+          {
+            outPoint: {
+              txHash: CONTRACTS.pledge.txHash,
+              index: CONTRACTS.pledge.index,
+            },
+            depType: "code",
+          },
+          {
+            outPoint: {
+              txHash: CONTRACTS.pledgeLock.txHash,
+              index: CONTRACTS.pledgeLock.index,
+            },
+            depType: "code",
+          },
+          {
+            outPoint: {
+              txHash: CONTRACTS.receipt.txHash,
+              index: CONTRACTS.receipt.index,
+            },
+            depType: "code",
+          },
+          {
+            // Campaign cell dep (for receipt type script validation)
+            outPoint: {
+              txHash: "0x" + campaignTxHash,
+              index: 0,
+            },
+            depType: "code",
+          },
+        ],
       });
 
       await tx.completeInputsByCapacity(signer);
@@ -280,6 +336,11 @@ export default function CampaignDetailPage() {
 
       const [txHash, indexStr] = campaign.campaignId.split("_");
 
+      // Fetch original campaign cell to preserve TypeID args
+      const campaignTx = await client.getTransaction(txHash);
+      const originalOutput = campaignTx!.transaction!.outputs[parseInt(indexStr)];
+      const typeIdArgs = originalOutput.type!.args;
+
       const tx = ccc.Transaction.from({
         inputs: [
           {
@@ -296,7 +357,7 @@ export default function CampaignDetailPage() {
             type: {
               codeHash: CONTRACTS.campaign.codeHash,
               hashType: CONTRACTS.campaign.hashType,
-              args: "0x",
+              args: typeIdArgs,
             },
           },
         ],
@@ -831,7 +892,7 @@ export default function CampaignDetailPage() {
               <div className="space-y-3">
                 {sortedPledges.map((pledge) => {
                   const receipt = receipts.find(
-                    (r) => r.backer.toLowerCase() === pledge.backer.toLowerCase()
+                    (r) => r.txHash.toLowerCase() === pledge.txHash.toLowerCase()
                   );
                   return (
                     <div

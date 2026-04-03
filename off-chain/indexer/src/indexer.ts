@@ -9,6 +9,7 @@ import { Database, DBCampaign, DBPledge, DBReceipt } from "./database";
  */
 export class CampaignIndexer {
   private client: ccc.Client;
+  private rpcUrl: string;
   private db: Database;
   private pollingTimer: ReturnType<typeof setInterval> | null = null;
   private campaignCodeHash: string = "";
@@ -18,6 +19,7 @@ export class CampaignIndexer {
 
   constructor(rpcUrl: string, db: Database) {
     this.client = new ccc.ClientPublicTestnet({ url: rpcUrl });
+    this.rpcUrl = rpcUrl;
     this.db = db;
   }
 
@@ -81,7 +83,7 @@ export class CampaignIndexer {
         args: "0x",
       },
       scriptType: "type" as const,
-      scriptSearchMode: "exact" as const,
+      scriptSearchMode: "prefix" as const,
     };
 
     const campaignCells: ccc.Cell[] = [];
@@ -97,7 +99,7 @@ export class CampaignIndexer {
         args: "0x",
       },
       scriptType: "type" as const,
-      scriptSearchMode: "exact" as const,
+      scriptSearchMode: "prefix" as const,
     };
 
     const pledgeCells: ccc.Cell[] = [];
@@ -175,7 +177,7 @@ export class CampaignIndexer {
           args: "0x",
         },
         scriptType: "type" as const,
-        scriptSearchMode: "exact" as const,
+        scriptSearchMode: "prefix" as const,
       };
 
       const receiptCells: ccc.Cell[] = [];
@@ -227,7 +229,11 @@ export class CampaignIndexer {
     }
 
     // Atomically replace all data in DB
-    this.db.replaceLiveCells(dbCampaigns, dbPledges, dbReceipts);
+    try {
+      this.db.replaceLiveCells(dbCampaigns, dbPledges, dbReceipts);
+    } catch (error) {
+      console.error("Error replacing live cells in DB:", error);
+    }
 
     console.log(`Indexed ${dbCampaigns.length} campaigns, ${dbPledges.length} pledges, and ${dbReceipts.length} receipts`);
     return { campaigns: dbCampaigns.length, pledges: dbPledges.length, receipts: dbReceipts.length };
@@ -417,9 +423,19 @@ export class CampaignIndexer {
   }
 
   /**
-   * Get receipts for a specific campaign
+   * Get receipts for a specific campaign.
+   * Uses originalTxHash linkage so receipts are found even after finalization
+   * changes the campaign's outpoint.
    */
   getReceiptsForCampaign(campaignId: string): Receipt[] {
+    const campaign = this.getCampaign(campaignId);
+    if (campaign) {
+      const linkageHash = this.getPledgeLinkageTxHash(campaign).toLowerCase();
+      const linkageId = `${linkageHash}_0`;
+      return this.db.getAllReceipts()
+        .filter((r) => r.campaign_id.toLowerCase() === linkageHash || r.campaign_id.toLowerCase() === linkageId)
+        .map((row) => this.dbToReceipt(row));
+    }
     return this.db.getReceiptsForCampaign(campaignId).map((row) => this.dbToReceipt(row));
   }
 
@@ -431,10 +447,17 @@ export class CampaignIndexer {
   }
 
   /**
-   * Get current block number
+   * Get current block number via direct RPC call.
+   * Uses raw JSON-RPC instead of client.getTip() because CCC's ClientPublicTestnet
+   * returns the testnet tip even when configured with a custom (devnet) URL.
    */
   async getCurrentBlockNumber(): Promise<bigint> {
-    const tip = await this.client.getTip();
-    return BigInt(tip);
+    const res = await fetch(this.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "get_tip_block_number", params: [] }),
+    });
+    const json = (await res.json()) as { result: string };
+    return BigInt(json.result);
   }
 }

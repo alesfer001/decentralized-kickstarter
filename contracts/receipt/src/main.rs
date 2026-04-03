@@ -12,7 +12,6 @@ ckb_std::default_alloc!(16384, 1258306, 64);
 use ckb_std::{
     debug,
     high_level::{
-        load_script,
         load_cell_data,
         load_cell_lock,
         load_cell_lock_hash,
@@ -61,6 +60,7 @@ impl ReceiptData {
         Ok(ReceiptData { pledge_amount, backer_lock_hash })
     }
 
+    #[allow(dead_code)]
     fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut bytes = [0u8; Self::SIZE];
         bytes[0..8].copy_from_slice(&self.pledge_amount.to_le_bytes());

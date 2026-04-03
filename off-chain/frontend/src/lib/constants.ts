@@ -27,6 +27,8 @@ interface ContractInfo {
 interface ContractsConfig {
   campaign: ContractInfo;
   pledge: ContractInfo;
+  pledgeLock: ContractInfo;
+  receipt: ContractInfo;
 }
 
 // Code hashes are deterministic (blake2b of binary) — same across all networks.
@@ -37,62 +39,54 @@ const CAMPAIGN_CODE_HASH =
 const PLEDGE_CODE_HASH =
   process.env.NEXT_PUBLIC_PLEDGE_CODE_HASH ||
   "0x423442d38b9e1fdfe68d0e878c4003317fe85408e202fd7de776205d289bc924";
+const PLEDGE_LOCK_CODE_HASH =
+  process.env.NEXT_PUBLIC_PLEDGE_LOCK_CODE_HASH ||
+  "0x3bb066cda4600d9709c195f28fb11eca22367d590a6139c5fc3791932df66066";
+const RECEIPT_CODE_HASH =
+  process.env.NEXT_PUBLIC_RECEIPT_CODE_HASH ||
+  "0x67ca84f10c9bf7ecbed480ebedb0f6e380cc6c11825f2f77683b72ffbcaa352f";
+
+function buildNetworkContracts(network: NetworkType): ContractsConfig {
+  const zero = "0x0000000000000000000000000000000000000000000000000000000000000000";
+  const devnetDefaults: Record<string, string> = {
+    campaign: "0x8d501828096d4b70a2f032ee04672cf5a75f8771dd1fb2ea23de0ef1519d05d6",
+    pledge: "0x304be042daf897898dcf1851e12ecabaa0400f677f0135fe9ec6c727fdc1a9e2",
+    pledgeLock: zero,
+    receipt: zero,
+  };
+  const fallback = network === "devnet" ? devnetDefaults : { campaign: zero, pledge: zero, pledgeLock: zero, receipt: zero };
+  return {
+    campaign: {
+      codeHash: CAMPAIGN_CODE_HASH,
+      hashType: "data2",
+      txHash: process.env.NEXT_PUBLIC_CAMPAIGN_TX_HASH || fallback.campaign,
+      index: 0,
+    },
+    pledge: {
+      codeHash: PLEDGE_CODE_HASH,
+      hashType: "data2",
+      txHash: process.env.NEXT_PUBLIC_PLEDGE_TX_HASH || fallback.pledge,
+      index: 0,
+    },
+    pledgeLock: {
+      codeHash: PLEDGE_LOCK_CODE_HASH,
+      hashType: "data2",
+      txHash: process.env.NEXT_PUBLIC_PLEDGE_LOCK_TX_HASH || fallback.pledgeLock,
+      index: 0,
+    },
+    receipt: {
+      codeHash: RECEIPT_CODE_HASH,
+      hashType: "data2",
+      txHash: process.env.NEXT_PUBLIC_RECEIPT_TX_HASH || fallback.receipt,
+      index: 0,
+    },
+  };
+}
 
 const CONTRACTS_BY_NETWORK: Record<NetworkType, ContractsConfig> = {
-  devnet: {
-    campaign: {
-      codeHash: CAMPAIGN_CODE_HASH,
-      hashType: "data2",
-      txHash:
-        process.env.NEXT_PUBLIC_CAMPAIGN_TX_HASH ||
-        "0x8d501828096d4b70a2f032ee04672cf5a75f8771dd1fb2ea23de0ef1519d05d6",
-      index: 0,
-    },
-    pledge: {
-      codeHash: PLEDGE_CODE_HASH,
-      hashType: "data2",
-      txHash:
-        process.env.NEXT_PUBLIC_PLEDGE_TX_HASH ||
-        "0x304be042daf897898dcf1851e12ecabaa0400f677f0135fe9ec6c727fdc1a9e2",
-      index: 0,
-    },
-  },
-  testnet: {
-    campaign: {
-      codeHash: CAMPAIGN_CODE_HASH,
-      hashType: "data2",
-      txHash:
-        process.env.NEXT_PUBLIC_CAMPAIGN_TX_HASH ||
-        "0x0000000000000000000000000000000000000000000000000000000000000000", // Set after testnet deployment
-      index: 0,
-    },
-    pledge: {
-      codeHash: PLEDGE_CODE_HASH,
-      hashType: "data2",
-      txHash:
-        process.env.NEXT_PUBLIC_PLEDGE_TX_HASH ||
-        "0x0000000000000000000000000000000000000000000000000000000000000000", // Set after testnet deployment
-      index: 0,
-    },
-  },
-  mainnet: {
-    campaign: {
-      codeHash: CAMPAIGN_CODE_HASH,
-      hashType: "data2",
-      txHash:
-        process.env.NEXT_PUBLIC_CAMPAIGN_TX_HASH ||
-        "0x0000000000000000000000000000000000000000000000000000000000000000", // Set after mainnet deployment
-      index: 0,
-    },
-    pledge: {
-      codeHash: PLEDGE_CODE_HASH,
-      hashType: "data2",
-      txHash:
-        process.env.NEXT_PUBLIC_PLEDGE_TX_HASH ||
-        "0x0000000000000000000000000000000000000000000000000000000000000000", // Set after mainnet deployment
-      index: 0,
-    },
-  },
+  devnet: buildNetworkContracts("devnet"),
+  testnet: buildNetworkContracts("testnet"),
+  mainnet: buildNetworkContracts("mainnet"),
 };
 
 export const CONTRACTS = CONTRACTS_BY_NETWORK[NETWORK];
@@ -124,6 +118,11 @@ export const CAMPAIGN_DATA_SIZE = 65;
  * Pledge data size in bytes
  */
 export const PLEDGE_DATA_SIZE = 72;
+
+/**
+ * Receipt data size in bytes (pledge_amount u64 + backer_lock_hash 32 bytes)
+ */
+export const RECEIPT_DATA_SIZE = 40;
 
 /**
  * CKB Explorer base URLs per network

@@ -45,6 +45,7 @@ const ERROR_NOT_A_MERGE: i8 = 40;
 const ERROR_NO_MERGE_OUTPUT: i8 = 41;
 const ERROR_MULTIPLE_MERGE_OUTPUTS: i8 = 42;
 const ERROR_MERGE_CAPACITY_MISMATCH: i8 = 43;
+#[allow(dead_code)]
 const ERROR_MERGE_LOCK_MISMATCH: i8 = 44;
 
 /// Maximum fee deducted from pledge capacity during release/refund (1 CKB = 100M shannons)
@@ -180,7 +181,7 @@ fn find_output_to_lock_hash(expected_lock_hash: &[u8; 32], min_capacity: u64) ->
 }
 
 /// D-04: After deadline + Success -> output must go to creator_lock_hash
-fn validate_release(lock_args: &PledgeLockArgs, campaign: &CampaignData) -> i8 {
+fn validate_release(_lock_args: &PledgeLockArgs, campaign: &CampaignData) -> i8 {
     let total_input_capacity = match sum_group_input_capacity() {
         Ok(v) => v,
         Err(code) => return code,
@@ -205,7 +206,8 @@ fn validate_refund(lock_args: &PledgeLockArgs) -> i8 {
 
 /// D-03: Before deadline, only merging is allowed.
 /// Merge = multiple inputs with same lock -> 1 output with same lock, capacity preserved exactly.
-fn validate_merge(lock_args: &PledgeLockArgs) -> i8 {
+/// Uses Source::Output with manual lock hash comparison (avoids GroupOutput matching issues).
+fn validate_merge(_lock_args: &PledgeLockArgs) -> i8 {
     // Count group inputs and sum capacity
     let mut input_count: usize = 0;
     let mut total_input_cap: u64 = 0;
@@ -228,37 +230,46 @@ fn validate_merge(lock_args: &PledgeLockArgs) -> i8 {
         return ERROR_NOT_A_MERGE;
     }
 
-    // Must have exactly 1 group output
-    match load_cell_capacity(0, Source::GroupOutput) {
-        Ok(_) => {}
-        Err(_) => return ERROR_NO_MERGE_OUTPUT,
+    // Get our lock script hash from the first group input
+    let our_lock_hash = match load_cell_lock_hash(0, Source::GroupInput) {
+        Ok(h) => h,
+        Err(_) => return ERROR_LOAD_LOCK_HASH,
+    };
+
+    // Scan all outputs for cells matching our lock hash
+    let mut matching_output_count: usize = 0;
+    let mut matching_output_cap: u64 = 0;
+    for i in 0.. {
+        match load_cell_lock_hash(i, Source::Output) {
+            Ok(hash) => {
+                if hash == our_lock_hash {
+                    matching_output_count += 1;
+                    let cap = match load_cell_capacity(i, Source::Output) {
+                        Ok(c) => c,
+                        Err(_) => return ERROR_LOAD_CAPACITY,
+                    };
+                    matching_output_cap = match matching_output_cap.checked_add(cap) {
+                        Some(v) => v,
+                        None => return ERROR_OVERFLOW,
+                    };
+                }
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return ERROR_LOAD_LOCK_HASH,
+        }
     }
-    match load_cell_capacity(1, Source::GroupOutput) {
-        Ok(_) => return ERROR_MULTIPLE_MERGE_OUTPUTS,
-        Err(SysError::IndexOutOfBound) => {} // Good — only 1 output
-        Err(_) => return ERROR_LOAD_CAPACITY,
+
+    // Must have exactly 1 matching output
+    if matching_output_count == 0 {
+        return ERROR_NO_MERGE_OUTPUT;
+    }
+    if matching_output_count > 1 {
+        return ERROR_MULTIPLE_MERGE_OUTPUTS;
     }
 
     // Output capacity must equal total input capacity (no fee during merge)
-    let output_cap = match load_cell_capacity(0, Source::GroupOutput) {
-        Ok(c) => c,
-        Err(_) => return ERROR_LOAD_CAPACITY,
-    };
-    if output_cap != total_input_cap {
+    if matching_output_cap != total_input_cap {
         return ERROR_MERGE_CAPACITY_MISMATCH;
-    }
-
-    // Verify output has same lock script hash as inputs
-    let input_lock_hash = match load_cell_lock_hash(0, Source::GroupInput) {
-        Ok(h) => h,
-        Err(_) => return ERROR_LOAD_LOCK_HASH,
-    };
-    let output_lock_hash = match load_cell_lock_hash(0, Source::GroupOutput) {
-        Ok(h) => h,
-        Err(_) => return ERROR_LOAD_LOCK_HASH,
-    };
-    if input_lock_hash != output_lock_hash {
-        return ERROR_MERGE_LOCK_MISMATCH;
     }
 
     0

@@ -1106,3 +1106,99 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - Phase 15.3 (Frontend): Campaign detail page overhaul (-264/+81 lines), status badges, receipt display, 2 E2E scenarios
 - All 20 v1.1 requirements implemented, all contracts compile
 - Remaining: testnet deployment, external validation, Nervos Talk update
+
+**2026-03-31:** Phase 15 — v1.1 Devnet E2E Validation & Bug Fixes
+- Ran full v1.1 lifecycle integration tests (`test-v1.1-lifecycle.ts`) on local devnet — all 3 scenarios pass
+- **Contract fixes:**
+  - `pledge-lock`: Rewrote `validate_merge` to use `Source::Output` with manual lock hash comparison (fixes `GroupOutput` matching issue with `data2` hash type)
+  - `pledge-lock`: Prefixed unused `lock_args` params with `_`
+  - `receipt`: Removed unused `load_script` import, suppressed `to_bytes` dead code warning
+- **Transaction builder fixes:**
+  - `createCampaign`: Added TypeID args computation per CKB RFC-0022 — `blake2b(molecule_serialized_first_input || output_index_u64_le)`
+  - `finalizeCampaign`: Preserves TypeID args from original campaign cell (fetches from chain)
+  - `permissionlessRelease`: Deducts fee from output capacity (within MAX_FEE), no extra signer inputs needed
+  - `permissionlessRefund`: Same fee deduction pattern
+  - `mergeContributions`: Adds separate fee cell from signer, restores exact capacity on merge output (contract requires exact match)
+- **Deploy script fix:** Moved `scripts/deploy-contracts.ts` to `off-chain/transaction-builder/deploy-contracts.ts`, replaced duplicated broken devnet config with shared `createCkbClient`
+- All 4 contracts rebuilt and redeployed to devnet with warning-free compilation
+
+**2026-04-01:** Phase 15 — v1.1 Devnet E2E Testing (Scenario 6) & Infrastructure Fixes
+- Ran Scenario 6 (v1.1 Trustless Distribution) via `claude --chrome` browser automation
+- **Indexer bug fixes:**
+  - Changed `scriptSearchMode` from `"exact"` to `"prefix"` for campaign/pledge/receipt cell searches — `"exact"` with empty args skipped cells with TypeID args
+  - Added `import "dotenv/config"` to indexer entry point — `.env` file was never being loaded, indexer always used hardcoded v1.0 code hashes
+  - Changed `INSERT INTO` to `INSERT OR REPLACE INTO` for campaigns/pledges/receipts — individual insert failures no longer roll back the entire batch
+  - Wrapped `replaceLiveCells` call in try-catch for resilience
+  - Installed `dotenv` dependency
+- **Frontend fix:**
+  - Cleaned up `.env.local` with correct v1.1 contract code hashes and tx hashes after fresh deploy — stale env vars from previous devnet runs caused `TransactionFailedToResolve` errors
+- **Contract redeployment:**
+  - Deployed all 4 v1.1 contracts to fresh devnet via `deploy-contracts.ts`
+  - Updated both frontend `.env.local` and indexer `.env` with new deployment tx hashes
+- **Scenario 6 results — all 5 steps passed:**
+  - Step 1: Created "Quick Trustless Test" campaign (200 CKB goal, short deadline) ✓
+  - Step 2: Pledged 250 CKB as Account #1 — "Locked" badge visible, no manual buttons ✓
+  - Step 3: Finalized after deadline — status changed to "Funded" (green) ✓
+  - Step 4: "Distribution Status" section visible with automatic/permissionless text ✓
+  - Step 5: As backer (Account #1) — no "Claim Refund" or "Release to Creator" buttons ✓
+
+**2026-04-03:** Phase 15 — v1.1 Full E2E Devnet Validation (All 7 Scenarios)
+- Ran `test-v1.1-lifecycle.ts` on devnet — all 3 transaction-level scenarios pass (success release, failure refund, merge-then-release)
+- Ran all 7 browser E2E scenarios via `claude --chrome` on devnet — **all pass**
+- **Indexer bug fixes:**
+  - `getCurrentBlockNumber`: Replaced `client.getTip()` with direct JSON-RPC call — CCC's `ClientPublicTestnet.getTip()` returns the testnet tip even when configured with a custom devnet URL
+  - `getReceiptsForCampaign`: Added `originalTxHash` linkage (mirroring pledge lookup) — receipts were not found after finalization because the campaign outpoint changes
+- **Browser E2E results:**
+  - Scenario 1 (Successful Campaign Lifecycle): create → pledge 300 CKB → pledge 250 CKB → finalize as Success → verify no manual buttons ✓
+  - Scenario 2 (Failed Campaign Refund): create → pledge 100 CKB (1% of 10,000 goal) → finalize as Failed → verify no manual refund buttons ✓
+  - Scenario 3 (Indexer Persistence): campaign + pledge + receipt data survives indexer restart, available immediately ✓
+  - Scenario 4 (Edge Cases): exact goal match (200/200 = 100.0%) ✓, zero pledges → finalize → destroy ✓, form validation (empty title, goal < 100, deadline in past) ✓
+  - Scenario 5 (Campaign Destruction): destroy button appears after finalize with 0 pledges, campaign removed from listing and direct URL ✓
+  - Scenario 6 (Trustless Distribution): "Locked" badges, "Distribution Status" section, no manual release/refund buttons ✓
+  - Scenario 7 (Receipt Display): "Receipt: N CKB" inline with each pledge row, amounts match ✓
+- **v1.1 core requirements validated:**
+  - Receipt info appears inline with each pledge row
+  - No manual "Release to Creator" or "Claim Refund" buttons exist
+  - "Distribution Status" section appears after finalization
+  - Fund distribution described as automatic/permissionless
+  - "Locked" status badges on pledge rows
+
+### Phase 16: Automatic Finalization Bot
+
+**Problem:** After the deadline passes, someone must manually click "Finalize Campaign" to transition the on-chain status. While this is permissionless (anyone can do it), it still requires a manual trigger. This creates friction — campaigns sit in "Expired - Needs Finalization" state until someone acts.
+
+**Solution:** A lightweight background service that monitors for expired campaigns and automatically submits finalization transactions.
+
+#### Scope
+- [ ] Background service that polls the indexer for campaigns with `status: Active` and `deadlineBlock < currentBlock`
+- [ ] Automatically builds and submits `finalizeCampaign` transactions
+- [ ] Dedicated CKB account funded with a small amount (~10 CKB) for transaction fees (~0.001 CKB per finalization)
+- [ ] Configurable poll interval and batch size
+- [ ] Logging and error handling for failed finalizations
+- [ ] Optional: also trigger `permissionlessRelease` / `permissionlessRefund` after finalization
+
+#### Design Notes
+- The bot needs no special permissions — finalization is permissionless on-chain
+- Transaction fees are negligible (~0.001 CKB each)
+- Can run alongside the indexer or as a separate service
+- Fail-safe: if the bot is down, users can still finalize manually from the UI
+
+### Phase 17: Platform Business Model & Treasury
+
+**Purpose:** Design a sustainable business model for the platform. Currently the platform operates at zero cost to users — no fees are collected. This phase explores revenue mechanisms and treasury management to fund ongoing development, infrastructure, and the finalization bot.
+
+#### Discussion Topics
+- [ ] **Fee structure:** percentage from each pledge (e.g., 1-3%) vs flat fee vs creator-side fee only
+- [ ] **Fee collection mechanism:** on-chain (baked into pledge lock script) vs off-chain (indexer/API level)
+- [ ] **Treasury contract:** on-chain treasury cell that accumulates fees, governed by multisig or DAO
+- [ ] **Fee transparency:** display platform fee clearly in UI before pledge confirmation
+- [ ] **Free tier vs premium:** should small campaigns be fee-free? Tiered pricing?
+- [ ] **Infrastructure costs:** Render (indexer hosting), Vercel (frontend), CKB node, finalization bot
+- [ ] **Grant sustainability:** how does fee revenue complement or replace grant funding?
+- [ ] **Competitive analysis:** what do other crowdfunding platforms charge? (Kickstarter: 5%, GoFundMe: 0% + tips)
+
+#### Implementation Considerations
+- On-chain fee collection is most trustless but requires contract changes (pledge lock script modification)
+- Off-chain fee collection is simpler but requires trust in the platform operator
+- Treasury governance: who controls the treasury? Multisig? Future DAO token?
+- Fee must not make the platform uncompetitive with alternatives

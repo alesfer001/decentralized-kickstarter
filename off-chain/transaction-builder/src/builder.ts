@@ -59,7 +59,7 @@ export class TransactionBuilder {
           type: {
             codeHash: this.campaignContract.codeHash,
             hashType: this.campaignContract.hashType,
-            args: "0x", // No args for now
+            args: "0x" + "00".repeat(32), // Placeholder for TypeID (32 bytes)
           },
         },
       ],
@@ -78,6 +78,18 @@ export class TransactionBuilder {
     // Complete the transaction (add inputs to cover capacity + fee)
     await tx.completeInputsByCapacity(signer);
     await tx.completeFeeBy(signer, 1000); // 1000 shannons/KB fee rate
+
+    // Compute TypeID args: blake2b(molecule_serialized_first_input || output_index_u64_le)
+    // Per CKB RFC-0022, TypeID = blake2b(CellInput molecule bytes || u64 LE output index)
+    const firstInput = ccc.CellInput.from(tx.inputs[0]);
+    const serializedInput = firstInput.toBytes();
+    const outputIndexBytes = ccc.numLeToBytes(0, 8); // campaign is output[0]
+    const hasher = new ccc.HasherCkb();
+    hasher.update(serializedInput);
+    hasher.update(outputIndexBytes);
+    const typeIdArgs = hasher.digest();
+    tx.outputs[0].type!.args = typeIdArgs;
+    console.log(`TypeID args: ${typeIdArgs}`);
 
     // Sign and send
     console.log("Signing transaction...");
@@ -170,6 +182,11 @@ export class TransactionBuilder {
     const dataSize = 65 + metadataSize;
     const capacity = calculateCellCapacity(dataSize, true, 65);
 
+    // Fetch the original campaign cell to preserve TypeID args
+    const campaignTx = await this.client.getTransaction(params.campaignOutPoint.txHash);
+    const originalOutput = campaignTx!.transaction!.outputs[params.campaignOutPoint.index];
+    const typeIdArgs = originalOutput.type!.args;
+
     // Build the transaction: consume old campaign cell, create new one with updated status
     const tx = ccc.Transaction.from({
       inputs: [
@@ -187,7 +204,7 @@ export class TransactionBuilder {
           type: {
             codeHash: this.campaignContract.codeHash,
             hashType: this.campaignContract.hashType,
-            args: "0x",
+            args: typeIdArgs,
           },
         },
       ],
@@ -489,6 +506,10 @@ export class TransactionBuilder {
     // Since value: absolute block number for deadline enforcement
     const sinceValue = params.deadlineBlock;
 
+    // Deduct tx fee from pledge capacity (pledge lock allows up to 1 CKB fee deduction)
+    const txFee = BigInt(100000); // 0.001 CKB fee — well within MAX_FEE (1 CKB)
+    const creatorCapacity = params.pledgeCapacity - txFee;
+
     // Build the transaction
     const tx = ccc.Transaction.from({
       inputs: [
@@ -503,8 +524,8 @@ export class TransactionBuilder {
       ],
       outputs: [
         {
-          // Creator receives the pledge funds
-          capacity: params.pledgeCapacity,
+          // Creator receives the pledge funds (minus small fee)
+          capacity: creatorCapacity,
           lock: {
             codeHash: params.creatorLockScript.codeHash,
             hashType: params.creatorLockScript.hashType as "type" | "data" | "data1" | "data2",
@@ -539,9 +560,6 @@ export class TransactionBuilder {
       ],
     });
 
-    // Signer provides fee cells only
-    await tx.completeFeeBy(signer, 1000);
-
     console.log("Signing permissionless release transaction...");
     const txHash = await signer.sendTransaction(tx);
     console.log(`Permissionless release completed! TX: ${txHash}`);
@@ -560,8 +578,9 @@ export class TransactionBuilder {
     // Since value for pledge cell: absolute block number >= deadline
     const sinceValue = params.deadlineBlock;
 
-    // Total capacity returned to backer: pledge capacity + receipt capacity
-    const backerOutputCapacity = params.pledgeCapacity + params.receiptCapacity;
+    // Total capacity returned to backer: pledge capacity + receipt capacity (minus small fee)
+    const txFee = BigInt(100000); // 0.001 CKB fee — within MAX_FEE (1 CKB)
+    const backerOutputCapacity = params.pledgeCapacity + params.receiptCapacity - txFee;
 
     // Build cell deps
     const cellDeps: Array<{ outPoint: { txHash: string; index: number }; depType: "code" | "depGroup" }> = [
@@ -633,9 +652,6 @@ export class TransactionBuilder {
       cellDeps,
     });
 
-    // Signer provides fee cells (backer is the signer)
-    await tx.completeFeeBy(signer, 1000);
-
     console.log("Signing permissionless refund transaction...");
     const txHash = await signer.sendTransaction(tx);
     console.log(`Permissionless refund completed! TX: ${txHash}`);
@@ -667,7 +683,7 @@ export class TransactionBuilder {
       since: BigInt(0),
     }));
 
-    // Sum all capacities for the merged output
+    // Sum all capacities for the merged output (no fee deduction — merge preserves capacity exactly)
     const totalCapacity = params.pledgeCapacities.reduce((sum, cap) => sum + cap, BigInt(0));
 
     // Serialize merged pledge data
@@ -718,8 +734,13 @@ export class TransactionBuilder {
       ],
     });
 
-    // Signer provides fee cells
+    // Add a separate fee cell from the signer (must not touch the merge output capacity)
+    await tx.addCellDepsOfKnownScripts(this.client, ccc.KnownScript.Secp256k1Blake160);
+    await tx.completeInputsByCapacity(signer);
     await tx.completeFeeBy(signer, 1000);
+
+    // Restore merge output capacity (completeFeeBy may have adjusted it)
+    tx.outputs[0].capacity = totalCapacity;
 
     console.log("Signing merge contributions transaction...");
     const txHash = await signer.sendTransaction(tx);

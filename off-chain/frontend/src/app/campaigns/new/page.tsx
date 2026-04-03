@@ -134,7 +134,7 @@ export default function CreateCampaignPage() {
             type: {
               codeHash: CONTRACTS.campaign.codeHash,
               hashType: CONTRACTS.campaign.hashType,
-              args: "0x",
+              args: "0x" + "00".repeat(32), // Placeholder for TypeID (32 bytes)
             },
           },
         ],
@@ -155,7 +155,20 @@ export default function CreateCampaignPage() {
       await tx.completeInputsByCapacity(signer);
       await tx.completeFeeBy(signer, 1000);
 
+      console.log("Inputs:", tx.inputs.length, "Outputs:", tx.outputs.length);
+      console.log("First input outpoint:", tx.inputs[0].previousOutput.txHash, tx.inputs[0].previousOutput.index);
+
+      // Compute TypeID args: blake2b(molecule_serialized_first_input || output_index_u64_le)
+      const firstInput = ccc.CellInput.from(tx.inputs[0]);
+      const hasher = new ccc.HasherCkb();
+      hasher.update(firstInput.toBytes());
+      hasher.update(ccc.numLeToBytes(0, 8));
+      tx.outputs[0].type!.args = hasher.digest();
+      console.log("TypeID args:", tx.outputs[0].type!.args);
+
+      console.log("Sending transaction...");
       const hash = await signer.sendTransaction(tx);
+      console.log("TX hash:", hash);
       toast("success", "Campaign created successfully!");
 
       // Poll indexer until the new campaign appears, then redirect

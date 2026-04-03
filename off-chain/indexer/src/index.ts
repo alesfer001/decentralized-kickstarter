@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { CampaignIndexer } from "./indexer";
 import { IndexerAPI } from "./api";
 import { Database } from "./database";
