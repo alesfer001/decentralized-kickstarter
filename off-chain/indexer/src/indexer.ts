@@ -447,10 +447,47 @@ export class CampaignIndexer {
   }
 
   /**
-   * Get count of unique backers across pledges and receipts for a campaign
+   * Get count of unique backers across pledges and receipts for a campaign.
+   * Uses the same linkage pattern as getPledgesForCampaign/getReceiptsForCampaign
+   * because pledge campaign_id is a type script hash, not the campaign outpoint ID.
    */
   getUniqueBackerCount(campaignId: string): number {
-    return this.db.getUniqueBackerCount(campaignId);
+    const campaign = this.getCampaign(campaignId);
+    const backers = new Set<string>();
+
+    if (campaign) {
+      const linkageHash = this.getPledgeLinkageTxHash(campaign).toLowerCase();
+      const linkageId = `${linkageHash}_0`;
+
+      for (const p of this.db.getAllPledges()) {
+        if (p.campaign_id.toLowerCase() === linkageHash) {
+          backers.add(p.backer_lock_hash.toLowerCase());
+        }
+      }
+      for (const r of this.db.getAllReceipts()) {
+        const rid = r.campaign_id.toLowerCase();
+        if (rid === linkageHash || rid === linkageId) {
+          backers.add(r.backer_lock_hash.toLowerCase());
+        }
+      }
+    } else {
+      // Fallback: strip _N suffix and match directly
+      const txHashOnly = campaignId.includes("_") ? campaignId.split("_")[0] : campaignId;
+      const normalized = txHashOnly.toLowerCase();
+
+      for (const p of this.db.getAllPledges()) {
+        if (p.campaign_id.toLowerCase() === normalized) {
+          backers.add(p.backer_lock_hash.toLowerCase());
+        }
+      }
+      for (const r of this.db.getAllReceipts()) {
+        if (r.campaign_id.toLowerCase() === normalized) {
+          backers.add(r.backer_lock_hash.toLowerCase());
+        }
+      }
+    }
+
+    return backers.size;
   }
 
   /**

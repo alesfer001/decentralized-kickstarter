@@ -437,9 +437,13 @@ export default function CampaignDetailPage() {
         return;
       }
 
-      // Calculate pledge cell capacity (same formula as creation)
-      const pledgeLockSize = 105; // lock script bytes
-      const pledgeCapacity = BigInt(Math.ceil((8 + 72 + 65 + pledgeLockSize) * 1.2)) * BigInt(100000000);
+      // Fetch actual pledge cell capacity from chain (includes base + pledge amount)
+      const pledgeTxData = await client.getTransaction(pledgeCell.txHash);
+      if (!pledgeTxData || !pledgeTxData.transaction) {
+        toast("error", "Could not fetch pledge transaction from chain");
+        return;
+      }
+      const pledgeCapacity = BigInt(pledgeTxData.transaction.outputs[pledgeCell.index]!.capacity);
 
       // Get campaign cell outpoint for deps
       const [campaignTxHash, campaignIndexStr] = campaign.campaignId.split("_");
@@ -543,10 +547,20 @@ export default function CampaignDetailPage() {
         return;
       }
 
-      // Calculate capacities
-      const pledgeLockSize = 105;
-      const pledgeCapacity = BigInt(Math.ceil((8 + 72 + 65 + pledgeLockSize) * 1.2)) * BigInt(100000000);
-      const receiptCapacity = BigInt(Math.ceil((8 + 72 + 65 + 65) * 1.2)) * BigInt(100000000);
+      // Fetch actual cell capacities from chain
+      const pledgeTxData = await client.getTransaction(pledgeCell.txHash);
+      if (!pledgeTxData || !pledgeTxData.transaction) {
+        toast("error", "Could not fetch pledge transaction from chain");
+        return;
+      }
+      const pledgeCapacity = BigInt(pledgeTxData.transaction.outputs[pledgeCell.index]!.capacity);
+
+      const receiptTxData = await client.getTransaction(firstReceipt.txHash);
+      if (!receiptTxData || !receiptTxData.transaction) {
+        toast("error", "Could not fetch receipt transaction from chain");
+        return;
+      }
+      const receiptCapacity = BigInt(receiptTxData.transaction.outputs[firstReceipt.index]!.capacity);
 
       // Get campaign cell outpoint
       const [campaignTxHash, campaignIndexStr] = campaign.campaignId.split("_");
