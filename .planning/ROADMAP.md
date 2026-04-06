@@ -1,7 +1,7 @@
 # Roadmap: CKB Kickstarter v1.1
 
 ## Overview
-3 phases | 20 requirements | Coarse granularity
+5 phases | 21 requirements | Coarse granularity
 
 Core value: Backers' funds are automatically routed to the correct destination (creator on success, backer on failure) without anyone's cooperation — enforced entirely by on-chain scripts.
 
@@ -59,6 +59,19 @@ Plans:
 4. Permissionless finalization deferred to v1.2; creator-only finalization documented with v1.2 roadmap (BUG-01)
 5. Backer count displays correctly on campaign listing cards, counting unique backers across pledges and receipts (BUG-05)
 
+## Phase 5: Permissionless Finalization (Campaign Lock Script)
+**Goal:** Replace creator's secp256k1 lock on campaign cells with a custom campaign-lock script that allows anyone to finalize expired campaigns — unblocking Phase 16 (auto-finalization bot).
+**Requirements:** BUG-01
+**UI hint:** yes
+**Canonical refs:** docs/IMPLEMENTATION-NOTES.md, docs/ProjectPlan.md §Phase 15.5
+**Success criteria:**
+1. Custom campaign-lock script compiles and allows spending when current block >= campaign deadline AND type script validates Success/Failed transition
+2. Campaign-lock script rejects spending before deadline by non-creator transactions
+3. Transaction builder creates campaigns with campaign-lock instead of creator's secp256k1 lock
+4. Any wallet can finalize an expired campaign on devnet — not just the creator
+5. Full lifecycle on testnet: create → pledge → (anyone) finalize → permissionless release/refund
+6. Frontend removes creator-only finalization restriction and shows "Finalize" to all users on expired campaigns
+
 ## Requirement Coverage Validation
 
 All 20 v1.1 requirements are mapped:
@@ -68,7 +81,8 @@ All 20 v1.1 requirements are mapped:
 | Phase 1 | LOCK-01, LOCK-02, LOCK-03, LOCK-04, RCPT-01, RCPT-02, RCPT-03, MERGE-02, CAMP-01, CAMP-02 | 10 |
 | Phase 2 | TXB-01, TXB-02, TXB-03, TXB-04, MERGE-01, IDX-01, IDX-02 | 7 |
 | Phase 3 | UI-01, UI-02, UI-03 | 3 |
-| **Total** | | **20** |
+| Phase 5 | BUG-01 | 1 |
+| **Total** | | **21** |
 
 ---
 

@@ -573,6 +573,7 @@ Data:
 - Campaign categories and tagging
 - Advanced search and filtering
 - Pre-wallet confirmation dialog showing exact CKB amounts
+- Early finalization — allow creator to finalize before deadline (e.g., goal already met)
 
 ### v1.3: Multi-Token Support
 - sUDT integration (stablecoins like USDT/USDC)

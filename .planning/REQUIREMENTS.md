@@ -50,7 +50,7 @@ Requirements for v1.1 release. Each maps to roadmap phases.
 
 ### Bug Fixes (Testnet E2E)
 
-- [x] **BUG-01**: Finalization is permissionless — any wallet can finalize expired campaigns (not just creator) — *Deferred to v1.2; v1.1 limited to creator-only finalization with documentation*
+- [ ] **BUG-01**: Finalization is permissionless — any wallet can finalize expired campaigns (not just creator) — custom campaign-lock script replaces creator's secp256k1 lock
 - [ ] **BUG-02**: Campaign cell capacity returns to creator after finalization (not leaked to finalizer)
 - [ ] **BUG-03**: Distribution trigger UI — "Trigger Release" / "Trigger Refund" buttons visible to all users on finalized campaigns
 - [ ] **BUG-04**: Pledge form shows total cost breakdown (pledge amount + receipt cell capacity + tx fee) before wallet popup
