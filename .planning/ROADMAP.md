@@ -46,7 +46,7 @@ Build order follows natural dependency chain: on-chain contracts → off-chain i
 **Plans:** 5 plans in 2 waves
 
 Plans:
-- [ ] 04-01-PLAN.md — BUG-03: Add distribution trigger buttons (Release/Refund) to finalized campaigns, visible to all users
+- [x] 04-01-PLAN.md — BUG-03: Add distribution trigger buttons (Release/Refund) to finalized campaigns, visible to all users
 - [ ] 04-02-PLAN.md — BUG-05: Fix backer count calculation to include both pledges and receipts via indexer API
 - [ ] 04-03-PLAN.md — BUG-04: Add cost breakdown display to pledge form (pledge + receipt + cell + fee)
 - [ ] 04-04-PLAN.md — BUG-02: Fix campaign cell capacity leak — return excess capacity to creator after finalization
