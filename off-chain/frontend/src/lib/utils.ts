@@ -224,6 +224,29 @@ export function getDistributionSummary(
 }
 
 /**
+ * Determine which distribution trigger buttons should be visible for a campaign
+ * Returns object with showRelease and showRefund booleans, and optional reason if disabled
+ */
+export function getDistributionTriggerState(
+  campaignStatus: CampaignStatus,
+  receiptCount: number
+): { showRelease: boolean; showRefund: boolean; reasonDisabled?: string } {
+  if (receiptCount === 0) {
+    return { showRelease: false, showRefund: false, reasonDisabled: "No pledges to distribute" };
+  }
+
+  if (campaignStatus === CampaignStatus.Success) {
+    return { showRelease: true, showRefund: false };
+  }
+
+  if (campaignStatus === CampaignStatus.Failed) {
+    return { showRelease: false, showRefund: true };
+  }
+
+  return { showRelease: false, showRefund: false };
+}
+
+/**
  * Cost breakdown for pledge creation
  * Pledge amount + pledge cell capacity + receipt cell capacity + estimated fee
  * Values returned in shannons (1 CKB = 100,000,000 shannons)
