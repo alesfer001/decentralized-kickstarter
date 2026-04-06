@@ -38,6 +38,18 @@ Build order follows natural dependency chain: on-chain contracts → off-chain i
 3. Full end-to-end lifecycle passes on testnet: campaign creation → pledge with receipt → finalization → permissionless release (success) or refund (failure) — triggered by any wallet
 4. Testnet deployment validated by external tester completing a full lifecycle without manual fund routing
 
+## Phase 4: v1.1 Bug Fixes
+**Goal:** Fix 5 bugs found during testnet E2E testing that prevent v1.1 from being usable — distribution trigger UI, capacity leak, receipt cost UX, permissionless finalization, and backer count display.
+**Requirements:** BUG-01, BUG-02, BUG-03, BUG-04, BUG-05
+**UI hint:** yes
+**Canonical refs:** docs/ProjectPlan.md §Phase 15.5
+**Success criteria:**
+1. "Trigger Release" and "Trigger Refund" buttons appear on finalized campaigns — any wallet can trigger, funds move to correct destination
+2. Campaign cell capacity returns to creator after finalization, not to the finalizer
+3. Pledge form shows total cost breakdown (pledge + receipt cell + fee) before wallet popup
+4. Any wallet can finalize expired campaigns (not just the creator)
+5. Backer count displays correctly on campaign listing cards
+
 ## Requirement Coverage Validation
 
 All 20 v1.1 requirements are mapped:

@@ -48,6 +48,14 @@ Requirements for v1.1 release. Each maps to roadmap phases.
 - [ ] **UI-02**: Frontend displays receipt cells per backer as proof of pledge
 - [ ] **UI-03**: Frontend shows pledge lock status (locked/released/refunded)
 
+### Bug Fixes (Testnet E2E)
+
+- [ ] **BUG-01**: Finalization is permissionless — any wallet can finalize expired campaigns (not just creator)
+- [ ] **BUG-02**: Campaign cell capacity returns to creator after finalization (not leaked to finalizer)
+- [ ] **BUG-03**: Distribution trigger UI — "Trigger Release" / "Trigger Refund" buttons visible to all users on finalized campaigns
+- [ ] **BUG-04**: Pledge form shows total cost breakdown (pledge amount + receipt cell capacity + tx fee) before wallet popup
+- [ ] **BUG-05**: Backer count displays correctly on campaign listing cards (home page)
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
