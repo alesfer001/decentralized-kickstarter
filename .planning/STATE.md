@@ -1,23 +1,42 @@
+---
+gsd_state_version: 1.0
+milestone: v1.1
+milestone_name: Bug Fixes
+status: unknown
+stopped_at: Phase 04 Plan 02 completed
+last_updated: "2026-04-06T11:19:07.682Z"
+progress:
+  total_phases: 4
+  completed_phases: 3
+  total_plans: 16
+  completed_plans: 15
+---
+
 # Project State
 
 ## Current Phase
-Phase: 4 — v1.1 Bug Fixes
+
+Phase: 04
 Next action: /gsd:execute-phase 04 (continue with plan 04-05 or 04-02)
 
 ## Project Reference
+
 See: .planning/PROJECT.md
 Core value: Backers' funds are automatically routed to the correct destination (creator on success, backer on failure) without anyone's cooperation — enforced entirely by on-chain scripts.
 
 ## Phase History
+
 - Phases 1-3: v1.1 implementation completed (contracts, off-chain, frontend + E2E)
 - Phase 4: Started 2026-04-06
 
 ## Last Session
+
 - **Stopped at:** Phase 04 Plan 02 completed
 - **Completed:** 04-02-SUMMARY.md created (Accurate Backer Count)
 - **Session date:** 2026-04-06T14:35:00Z
 
 ## Completed Plans in Phase 4
+
 - Plan 01: BUG-03 Distribution Trigger Buttons (COMPLETED 2026-04-06)
 - Plan 02: BUG-05 Accurate Backer Count (COMPLETED 2026-04-06)
 - Plan 03: BUG-04 Receipt Cost Breakdown UX (COMPLETED 2026-04-06)
@@ -25,6 +44,7 @@ Core value: Backers' funds are automatically routed to the correct destination (
 - Plan 05: BUG-01 Permissionless Finalization (documented, deferred to v1.2)
 
 ## Decisions Made
+
 - **D-06 implemented:** finalizeCampaign creates change output routing excess to creator
 - **D-07 implemented:** Campaign cell keeps minimum capacity; excess goes to separate output
 - **D-11 confirmed:** Campaign cells locked with creator's lock script
