@@ -340,6 +340,9 @@ export class CampaignIndexer {
    */
   calculateTotalPledged(campaign: Campaign): bigint {
     const linkageHash = this.getPledgeLinkageTxHash(campaign).toLowerCase();
+    const linkageId = `${linkageHash}_0`;
+
+    // Sum from live pledge cells
     const pledges = this.db.getAllPledges();
     let total = BigInt(0);
     for (const p of pledges) {
@@ -347,6 +350,19 @@ export class CampaignIndexer {
         total += BigInt(p.amount);
       }
     }
+
+    // If no live pledges (consumed after release/refund), fall back to receipt amounts
+    // Receipts persist as proof-of-pledge even after fund distribution
+    if (total === BigInt(0)) {
+      const receipts = this.db.getAllReceipts();
+      for (const r of receipts) {
+        const rid = r.campaign_id.toLowerCase();
+        if (rid === linkageHash || rid === linkageId) {
+          total += BigInt(r.pledge_amount);
+        }
+      }
+    }
+
     return total;
   }
 

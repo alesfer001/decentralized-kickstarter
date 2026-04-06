@@ -1068,7 +1068,7 @@ export default function CampaignDetailPage() {
                 v1.1: Fund distribution is automatic and permissionless. Anyone can trigger release/refund transactions.
               </p>
 
-              {signer && receiptCount > 0 && (
+              {signer && pledges.length > 0 && (
                 <div className="mt-4 space-y-2">
                   {campaign.status === CampaignStatus.Success && (
                     <button
