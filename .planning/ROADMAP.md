@@ -50,7 +50,7 @@ Plans:
 - [ ] 04-02-PLAN.md — BUG-05: Fix backer count calculation to include both pledges and receipts via indexer API
 - [ ] 04-03-PLAN.md — BUG-04: Add cost breakdown display to pledge form (pledge + receipt + cell + fee)
 - [ ] 04-04-PLAN.md — BUG-02: Fix campaign cell capacity leak — return excess capacity to creator after finalization
-- [ ] 04-05-PLAN.md — BUG-01: Defer permissionless finalization to v1.2, document limitation and v1.2 approach
+- [x] 04-05-PLAN.md — BUG-01: Defer permissionless finalization to v1.2, document limitation and v1.2 approach
 
 **Success criteria:**
 1. "Trigger Release" and "Trigger Refund" buttons appear on finalized campaigns — any wallet can trigger, funds move to correct destination (BUG-03)
