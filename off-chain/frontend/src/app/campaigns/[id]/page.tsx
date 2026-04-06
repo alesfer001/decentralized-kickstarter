@@ -403,6 +403,232 @@ export default function CampaignDetailPage() {
     }
   }
 
+  async function handleTriggerRelease() {
+    if (!signer || !campaign || receipts.length === 0) return;
+    setActionLoading(true);
+    setActionTxHash(null);
+
+    try {
+      const address = await signer.getRecommendedAddress();
+      const client = signer.client;
+      const addressObj = await ccc.Address.fromString(address, client);
+      const signerLockHash = addressObj.script.hash();
+
+      // Get creator's lock script from campaign
+      const creatorLockScript = campaign.creatorLockScript || {
+        codeHash: "",
+        hashType: "",
+        args: "",
+      };
+
+      // For each pledge (receipt), trigger a permissionless release transaction
+      // For simplicity, we'll trigger for the first receipt to demonstrate
+      // In production, you'd batch multiple or loop through
+      const firstReceipt = receipts[0];
+
+      // Parse the pledge cell from the receipt txHash
+      const pledgeCell = pledges.find((p) =>
+        p.txHash.toLowerCase() === firstReceipt.txHash.toLowerCase()
+      );
+
+      if (!pledgeCell) {
+        toast("error", "Could not find pledge cell for receipt");
+        return;
+      }
+
+      // Calculate pledge cell capacity (same formula as creation)
+      const pledgeLockSize = 105; // lock script bytes
+      const pledgeCapacity = BigInt(Math.ceil((8 + 72 + 65 + pledgeLockSize) * 1.2)) * BigInt(100000000);
+
+      // Get campaign cell outpoint for deps
+      const [campaignTxHash, campaignIndexStr] = campaign.campaignId.split("_");
+      const campaignCellDep = {
+        txHash: campaignTxHash,
+        index: parseInt(campaignIndexStr),
+      };
+
+      // Build permissionless release transaction
+      const tx = ccc.Transaction.from({
+        inputs: [
+          {
+            previousOutput: {
+              txHash: pledgeCell.txHash,
+              index: pledgeCell.index,
+            },
+            since: campaign.deadlineBlock,
+          },
+        ],
+        outputs: [
+          {
+            capacity: pledgeCapacity - BigInt(100000), // Deduct small fee
+            lock: {
+              codeHash: creatorLockScript.codeHash || "",
+              hashType: (creatorLockScript.hashType || "type") as "type" | "data" | "data1" | "data2",
+              args: creatorLockScript.args || "",
+            },
+          },
+        ],
+        outputsData: ["0x"],
+        cellDeps: [
+          {
+            outPoint: campaignCellDep,
+            depType: "code",
+          },
+          {
+            outPoint: {
+              txHash: CONTRACTS.pledgeLock.txHash,
+              index: CONTRACTS.pledgeLock.index,
+            },
+            depType: "code",
+          },
+          {
+            outPoint: {
+              txHash: CONTRACTS.pledge.txHash,
+              index: CONTRACTS.pledge.index,
+            },
+            depType: "code",
+          },
+        ],
+      });
+
+      await tx.completeFeeBy(signer, 1000);
+      const hash = await signer.sendTransaction(tx);
+      setActionTxHash(hash);
+      toast("success", "Release triggered! Funds being sent to creator...");
+
+      // Poll for receipt distribution update
+      await pollForChange(async () => {
+        const updatedReceipts = await fetchReceiptsForCampaign(campaignId).catch(() => [] as Receipt[]);
+        setReceipts(updatedReceipts);
+        return updatedReceipts.length > receiptCount;
+      });
+    } catch (err) {
+      console.error("Failed to trigger release:", err);
+      const msg = err instanceof Error ? err.message : "Failed to trigger release";
+      if (msg.includes("rejected") || msg.includes("disconnected")) {
+        toast("warning", "Transaction was cancelled");
+      } else {
+        toast("error", msg);
+      }
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleTriggerRefund() {
+    if (!signer || !campaign || receipts.length === 0) return;
+    setActionLoading(true);
+    setActionTxHash(null);
+
+    try {
+      const address = await signer.getRecommendedAddress();
+      const client = signer.client;
+      const addressObj = await ccc.Address.fromString(address, client);
+      const signerLockHash = addressObj.script.hash();
+
+      // Get backer's lock script
+      const backerLockScript = (await ccc.Address.fromString(address, client)).script;
+
+      // For the first receipt/pledge pair, trigger permissionless refund
+      const firstReceipt = receipts[0];
+
+      // Find corresponding pledge
+      const pledgeCell = pledges.find((p) =>
+        p.txHash.toLowerCase() === firstReceipt.txHash.toLowerCase()
+      );
+
+      if (!pledgeCell) {
+        toast("error", "Could not find pledge cell for receipt");
+        return;
+      }
+
+      // Calculate capacities
+      const pledgeLockSize = 105;
+      const pledgeCapacity = BigInt(Math.ceil((8 + 72 + 65 + pledgeLockSize) * 1.2)) * BigInt(100000000);
+      const receiptCapacity = BigInt(Math.ceil((8 + 72 + 65 + 65) * 1.2)) * BigInt(100000000);
+
+      // Get campaign cell outpoint
+      const [campaignTxHash, campaignIndexStr] = campaign.campaignId.split("_");
+      const campaignCellDep = {
+        txHash: campaignTxHash,
+        index: parseInt(campaignIndexStr),
+      };
+
+      // Build permissionless refund transaction
+      const tx = ccc.Transaction.from({
+        inputs: [
+          {
+            previousOutput: {
+              txHash: pledgeCell.txHash,
+              index: pledgeCell.index,
+            },
+            since: campaign.deadlineBlock,
+          },
+          {
+            previousOutput: {
+              txHash: firstReceipt.txHash,
+              index: firstReceipt.index,
+            },
+          },
+        ],
+        outputs: [
+          {
+            capacity: pledgeCapacity + receiptCapacity - BigInt(100000), // Pledge + receipt - fee
+            lock: backerLockScript,
+          },
+        ],
+        outputsData: ["0x"],
+        cellDeps: [
+          {
+            outPoint: {
+              txHash: CONTRACTS.pledgeLock.txHash,
+              index: CONTRACTS.pledgeLock.index,
+            },
+            depType: "code",
+          },
+          {
+            outPoint: {
+              txHash: CONTRACTS.pledge.txHash,
+              index: CONTRACTS.pledge.index,
+            },
+            depType: "code",
+          },
+          {
+            outPoint: {
+              txHash: CONTRACTS.receipt.txHash,
+              index: CONTRACTS.receipt.index,
+            },
+            depType: "code",
+          },
+        ],
+      });
+
+      await tx.completeFeeBy(signer, 1000);
+      const hash = await signer.sendTransaction(tx);
+      setActionTxHash(hash);
+      toast("success", "Refund triggered! Funds being returned to backers...");
+
+      // Poll for receipt/pledge update
+      await pollForChange(async () => {
+        const updatedReceipts = await fetchReceiptsForCampaign(campaignId).catch(() => [] as Receipt[]);
+        const updatedPledges = await fetchPledgesForCampaign(campaignId);
+        setReceipts(updatedReceipts);
+        setPledges(updatedPledges);
+        return updatedPledges.length < pledges.length;
+      });
+    } catch (err) {
+      console.error("Failed to trigger refund:", err);
+      const msg = err instanceof Error ? err.message : "Failed to trigger refund";
+      if (msg.includes("rejected") || msg.includes("disconnected")) {
+        toast("warning", "Transaction was cancelled");
+      } else {
+        toast("error", msg);
+      }
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   async function handleDestroy() {
     if (!signer || !campaign) return;
     setActionLoading(true);
@@ -793,6 +1019,30 @@ export default function CampaignDetailPage() {
               <p className="text-xs text-zinc-500 mt-1">
                 v1.1: Fund distribution is automatic and permissionless. Anyone can trigger release/refund transactions.
               </p>
+
+              {signer && receiptCount > 0 && (
+                <div className="mt-4 space-y-2">
+                  {campaign.status === CampaignStatus.Success && (
+                    <button
+                      onClick={handleTriggerRelease}
+                      disabled={actionLoading}
+                      className="w-full px-4 py-3 font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
+                    >
+                      {actionLoading ? "Triggering Release..." : "Trigger Release"}
+                    </button>
+                  )}
+
+                  {campaign.status === CampaignStatus.Failed && (
+                    <button
+                      onClick={handleTriggerRefund}
+                      disabled={actionLoading}
+                      className="w-full px-4 py-3 font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
+                    >
+                      {actionLoading ? "Triggering Refund..." : "Trigger Refund"}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
