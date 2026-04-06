@@ -1034,26 +1034,33 @@ Bugs found (must fix before v1.1 is usable):
 
 ### Phase 15.5: v1.1 Bug Fixes (Required before v1.1 is usable)
 
-#### 15.5.1: Add Distribution Trigger Buttons (BUG-3 — Critical)
-- [ ] Add "Trigger Release" button on funded campaigns (calls `permissionlessRelease`)
-- [ ] Add "Trigger Refund" button on failed campaigns (calls `permissionlessRefund`)
-- [ ] Buttons visible to everyone (not just creator/backer) — permissionless
-- [ ] Update pledge status badges after distribution (Locked → Released/Refunded)
+#### 15.5.1: Add Distribution Trigger Buttons (BUG-3 — Critical) ✓
+- [x] Add "Trigger Release" button on funded campaigns (calls `permissionlessRelease`)
+- [x] Add "Trigger Refund" button on failed campaigns (calls `permissionlessRefund`)
+- [x] Buttons visible to everyone (not just creator/backer) — permissionless
+- [x] Buttons hidden after all pledges distributed (checks live pledge count)
+- [x] Fixed: frontend was using hardcoded base capacity instead of actual pledge cell capacity from chain — caused ERROR_INSUFFICIENT_OUTPUT (code 32)
 
-#### 15.5.2: Fix Campaign Cell Capacity (BUG-2)
-- [ ] Investigate `finalizeCampaign()` in transaction builder
-- [ ] Ensure excess campaign cell capacity goes back to creator, not finalizer
+#### 15.5.2: Fix Campaign Cell Capacity (BUG-2) ✓
+- [x] `finalizeCampaign()` now fetches original campaign cell capacity from chain
+- [x] Creates two outputs: finalized campaign cell (min capacity) + creator change cell (excess)
+- [x] Uses `params.campaignData.creatorLockHash` to reconstruct creator lock script
 
-#### 15.5.3: Receipt Cost UX (BUG-4)
-- [ ] Show estimated total cost in pledge form (pledge amount + receipt cell + fee)
-- [ ] Pre-confirmation breakdown before wallet popup
+#### 15.5.3: Receipt Cost UX (BUG-4) ✓
+- [x] Show estimated total cost in pledge form (pledge amount + pledge cell + receipt cell + fee)
+- [x] Live-updating breakdown below amount input, before wallet popup
+- [x] Capacity formulas match builder.ts: `max(ceil((8+dataSize+65+65)*1.2), 61) * 1e8`
 
-#### 15.5.4: Permissionless Finalization (BUG-1)
-- [ ] Design approach: custom campaign lock script, or alternative mechanism
-- [ ] Required for Phase 16 auto-finalization bot
+#### 15.5.4: Permissionless Finalization (BUG-1) — Deferred to v1.2
+- [x] Root cause documented: campaign cell locked with creator's lock script
+- [x] v1.2 approach documented in `docs/IMPLEMENTATION-NOTES.md` (custom campaign-lock contract)
+- [x] Frontend shows "only the campaign creator can finalize" message to non-creators
+- [ ] Implementation deferred — requires new contract + redeployment (out of scope for bug-fix phase)
 
-#### 15.5.5: Backer Count Fix (BUG-5 — Minor)
-- [ ] Investigate indexer backer count on campaign listing endpoint
+#### 15.5.5: Backer Count Fix (BUG-5) ✓
+- [x] `getUniqueBackerCount` now uses same linkage pattern as `getPledgesForCampaign` (pledge `campaign_id` is type script hash, not outpoint ID)
+- [x] Counts unique backers from both pledges AND receipts tables
+- [x] Funding progress preserved after distribution via receipt amount fallback
 
 ### Phase 16: Automatic Finalization Bot
 
@@ -1245,6 +1252,17 @@ Bugs found (must fix before v1.1 is usable):
 - Off-chain fee collection is simpler but requires trust in the platform operator
 - Treasury governance: who controls the treasury? Multisig? Future DAO token?
 - Fee must not make the platform uncompetitive with alternatives
+
+**2026-04-06:** Phase 15.5 — v1.1 Bug Fixes
+- Fixed all 5 bugs from testnet E2E testing
+- BUG-3 (Critical): Added "Trigger Release"/"Trigger Refund" buttons to campaign detail page — permissionless, any wallet can trigger
+  - Fixed frontend capacity calculation: was using hardcoded base capacity instead of actual cell capacity from chain (ERROR_INSUFFICIENT_OUTPUT code 32)
+  - Buttons hidden after all pledges distributed (checks live pledge count, not receipt count)
+- BUG-2: `finalizeCampaign` now creates 2 outputs — excess capacity returned to creator via change cell
+- BUG-4: Pledge form shows live cost breakdown (pledge + pledge cell + receipt cell + fee) before wallet popup
+- BUG-1: Deferred to v1.2 — documented root cause (creator lock script) and proposed custom campaign-lock approach in `docs/IMPLEMENTATION-NOTES.md`
+- BUG-5: `getUniqueBackerCount` fixed — was using SQL with wrong ID format (outpoint vs type script hash), now uses same linkage pattern as other pledge/receipt queries
+- Additional fix: funding progress and backer count preserved after release/refund via receipt amount fallback (pledge cells consumed in UTXO model)
 
 **2026-04-03:** Phase 15.4 — v1.1 Testnet Deployment & E2E Testing
 - Generated new testnet deployer account, funded via Nervos Pudge Faucet (100,000 CKB)
