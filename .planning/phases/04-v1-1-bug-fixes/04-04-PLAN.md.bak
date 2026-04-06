@@ -137,9 +137,9 @@ Ensure:
   <verify>
     <automated>grep -n "outputs: \[" /Users/ayoublesfer/Documents/Dev/decentralized-kickstarter/off-chain/transaction-builder/src/builder.ts | grep -A 5 "finalizeCampaign"</automated>
   </verify>
-  <!-- REMOVED - use acceptance_criteria instead -->
+  <done>
 finalizeCampaign creates two outputs: finalized campaign cell (minimum capacity) + creator change output (excess capacity). Excess routed to creator's lock script. Transaction still balances with completeFeeBy.
-  <!-- REMOVED - use acceptance_criteria instead -->
+  </done>
 </task>
 
 </tasks>

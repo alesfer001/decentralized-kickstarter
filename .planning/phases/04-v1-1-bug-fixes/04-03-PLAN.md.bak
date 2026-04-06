@@ -98,9 +98,9 @@ This task is exploratory — document findings for next task which will use thes
   <verify>
     <automated>grep -n "CAPACITY\|calculateCell" /Users/ayoublesfer/Documents/Dev/decentralized-kickstarter/off-chain/transaction-builder/src/builder.ts | head -20</automated>
   </verify>
-  <!-- REMOVED - use acceptance_criteria instead -->
+  <done>
 Identified capacity constants and fee calculation method used in transaction builder. Have exact values ready for frontend implementation.
-  <!-- REMOVED - use acceptance_criteria instead -->
+  </done>
 </task>
 
 <task type="auto">
@@ -163,9 +163,9 @@ Note: These functions should match the exact capacity calculations used in the b
   <verify>
     <automated>grep -n "calculateCostBreakdown\|formatCost" /Users/ayoublesfer/Documents/Dev/decentralized-kickstarter/off-chain/frontend/src/lib/utils.ts</automated>
   </verify>
-  <!-- REMOVED - use acceptance_criteria instead -->
+  <done>
 Helper functions calculateCostBreakdown and formatCost exported from utils.ts. Functions calculate and format cost breakdown matching builder.ts constants.
-  <!-- REMOVED - use acceptance_criteria instead -->
+  </done>
 </task>
 
 <task type="auto">
@@ -229,9 +229,9 @@ Styling should:
   <verify>
     <automated>grep -n "Cost Breakdown\|calculateCostBreakdown" /Users/ayoublesfer/Documents/Dev/decentralized-kickstarter/off-chain/frontend/src/app/campaigns/[id]/page.tsx</automated>
   </verify>
-  <!-- REMOVED - use acceptance_criteria instead -->
+  <done>
 Pledge form displays cost breakdown below amount input with live updates. Shows breakdown BEFORE submit button (before wallet popup). Uses calculateCostBreakdown and formatCost utilities.
-  <!-- REMOVED - use acceptance_criteria instead -->
+  </done>
 </task>
 
 </tasks>
