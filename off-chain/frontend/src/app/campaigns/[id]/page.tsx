@@ -1101,16 +1101,22 @@ export default function CampaignDetailPage() {
                   <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                     This campaign has expired and needs to be finalized on-chain.
                     {BigInt(campaign.totalPledged) >= BigInt(campaign.fundingGoal)
-                      ? " The funding goal was met -- it will be marked as Successful. Funds will be automatically released to the creator."
-                      : " The funding goal was not met -- it will be marked as Failed. Funds will be automatically refunded to backers."}
+                      ? " The funding goal was met — it will be marked as Successful. Funds will be automatically released to the creator."
+                      : " The funding goal was not met — it will be marked as Failed. Funds will be automatically refunded to backers."}
                   </p>
-                  <button
-                    onClick={handleFinalize}
-                    disabled={actionLoading}
-                    className="w-full px-4 py-3 font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
-                  >
-                    {actionLoading ? "Finalizing..." : "Finalize Campaign"}
-                  </button>
+                  {isCreator ? (
+                    <button
+                      onClick={handleFinalize}
+                      disabled={actionLoading}
+                      className="w-full px-4 py-3 font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
+                    >
+                      {actionLoading ? "Finalizing..." : "Finalize Campaign"}
+                    </button>
+                  ) : (
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">
+                      Currently, only the campaign creator can finalize. Permissionless finalization is planned for v1.2.
+                    </p>
+                  )}
                 </div>
               )}
 
