@@ -20,6 +20,8 @@ import {
   getPledgeDistributionColor,
   getExplorerTxUrl,
   getDistributionSummary,
+  calculateCostBreakdown,
+  formatCost,
 } from "@/lib/utils";
 import { CONTRACTS, PLEDGE_DATA_SIZE, RECEIPT_DATA_SIZE, EXPLORER_URL } from "@/lib/constants";
 import { u64ToHexLE, serializeMetadataHex } from "@/lib/serialization";
@@ -817,6 +819,39 @@ export default function CampaignDetailPage() {
                     disabled={pledging}
                   />
                 </div>
+
+                {pledgeAmount && (
+                  <div className="mt-3 p-3 bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
+                    <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">Cost Breakdown</div>
+                    {(() => {
+                      const breakdown = calculateCostBreakdown(pledgeAmount);
+                      return (
+                        <div className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                          <div className="flex justify-between">
+                            <span>Pledge amount:</span>
+                            <span className="font-medium">{formatCost(breakdown.pledgeAmount)} CKB</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Pledge cell capacity:</span>
+                            <span className="font-medium">{formatCost(breakdown.pledgeCellCapacity)} CKB</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Receipt cell capacity:</span>
+                            <span className="font-medium">{formatCost(breakdown.receiptCellCapacity)} CKB</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Estimated tx fee:</span>
+                            <span className="font-medium">{formatCost(breakdown.estimatedFee)} CKB</span>
+                          </div>
+                          <div className="border-t border-zinc-300 dark:border-zinc-700 my-2 pt-2 flex justify-between font-semibold text-zinc-800 dark:text-zinc-200">
+                            <span>Total cost:</span>
+                            <span>{formatCost(breakdown.totalCost)} CKB</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
 
                 {pledgeError && (
                   <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3">
