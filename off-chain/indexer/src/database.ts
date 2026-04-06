@@ -222,6 +222,33 @@ export class Database {
     );
   }
 
+  /**
+   * Get count of unique backers across pledges and receipts for a campaign
+   */
+  getUniqueBackerCount(campaignId: string): number {
+    const normalizedCampaignId = campaignId.toLowerCase();
+
+    // Get unique backer lock hashes from pledges
+    const pledgeBackers = new Set(
+      (this.db
+        .prepare("SELECT DISTINCT backer_lock_hash FROM pledges WHERE campaign_id = ?")
+        .all(normalizedCampaignId) as { backer_lock_hash: string }[])
+        .map((row) => row.backer_lock_hash.toLowerCase())
+    );
+
+    // Get unique backer lock hashes from receipts
+    const receiptBackers = new Set(
+      (this.db
+        .prepare("SELECT DISTINCT backer_lock_hash FROM receipts WHERE campaign_id = ?")
+        .all(normalizedCampaignId) as { backer_lock_hash: string }[])
+        .map((row) => row.backer_lock_hash.toLowerCase())
+    );
+
+    // Merge sets to get unique backers across both tables
+    const uniqueBackers = new Set([...pledgeBackers, ...receiptBackers]);
+    return uniqueBackers.size;
+  }
+
   getState(key: string): string | undefined {
     const row = this.db.prepare("SELECT value FROM indexer_state WHERE key = ?").get(key) as { value: string } | undefined;
     return row?.value;

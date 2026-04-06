@@ -22,6 +22,7 @@ export interface Campaign {
   index: number;
   createdAt: string;
   receiptCount?: number;
+  backerCount?: number;  // Count of unique backers across pledges and receipts
 }
 
 export enum CampaignStatus {

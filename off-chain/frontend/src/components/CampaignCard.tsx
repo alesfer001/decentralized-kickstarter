@@ -14,10 +14,9 @@ import {
 interface CampaignCardProps {
   campaign: Campaign;
   currentBlock: bigint | null;
-  backerCount: number;
 }
 
-export function CampaignCard({ campaign, currentBlock, backerCount }: CampaignCardProps) {
+export function CampaignCard({ campaign, currentBlock }: CampaignCardProps) {
   const progress = getFundingProgress(campaign.totalPledged, campaign.fundingGoal);
 
   // Compute effective status
@@ -112,7 +111,7 @@ export function CampaignCard({ campaign, currentBlock, backerCount }: CampaignCa
 
           <div className="flex justify-between text-sm">
             <span className="text-zinc-600 dark:text-zinc-400">Backers</span>
-            <span className="font-medium">{backerCount}</span>
+            <span className="font-medium">{campaign.backerCount ?? 0}</span>
           </div>
 
           <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800">

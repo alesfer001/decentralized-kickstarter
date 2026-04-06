@@ -57,6 +57,7 @@ export class IndexerAPI {
             index: c.index,
             createdAt: c.createdAt.toString(),
             receiptCount: this.indexer.getReceiptsForCampaign(c.id).length,
+            backerCount: this.indexer.getUniqueBackerCount(c.id),
           };
         });
 
@@ -96,6 +97,7 @@ export class IndexerAPI {
           index: campaign.index,
           createdAt: campaign.createdAt.toString(),
           receiptCount: this.indexer.getReceiptsForCampaign(campaign.id).length,
+          backerCount: this.indexer.getUniqueBackerCount(campaign.id),
         };
 
         res.json(serialized);

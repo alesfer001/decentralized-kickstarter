@@ -1,16 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Campaign, Pledge } from "@/lib/types";
-import { fetchCampaigns, fetchPledges, fetchBlockNumber, checkHealth } from "@/lib/api";
-import { getUniqueBackerCount } from "@/lib/utils";
+import { Campaign } from "@/lib/types";
+import { fetchCampaigns, fetchBlockNumber, checkHealth } from "@/lib/api";
 import { CampaignCard } from "@/components/CampaignCard";
 import { SkeletonCard } from "@/components/Skeleton";
 import Link from "next/link";
 
 export default function Home() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [pledgesByCampaign, setPledgesByCampaign] = useState<Record<string, Pledge[]>>({});
   const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,22 +28,13 @@ export default function Home() {
     }
 
     try {
-      const [campaignsData, pledgesData, blockNum] = await Promise.all([
+      const [campaignsData, blockNum] = await Promise.all([
         fetchCampaigns(),
-        fetchPledges(),
         fetchBlockNumber(),
       ]);
 
       setCampaigns(campaignsData);
       setCurrentBlock(blockNum);
-
-      // Group pledges by campaign
-      const grouped: Record<string, Pledge[]> = {};
-      for (const pledge of pledgesData) {
-        if (!grouped[pledge.campaignId]) grouped[pledge.campaignId] = [];
-        grouped[pledge.campaignId].push(pledge);
-      }
-      setPledgesByCampaign(grouped);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load campaigns");
     } finally {
@@ -127,7 +116,6 @@ export default function Home() {
               key={campaign.campaignId}
               campaign={campaign}
               currentBlock={currentBlock}
-              backerCount={getUniqueBackerCount(pledgesByCampaign[campaign.campaignId] || [])}
             />
           ))}
         </div>

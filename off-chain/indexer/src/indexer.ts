@@ -447,6 +447,13 @@ export class CampaignIndexer {
   }
 
   /**
+   * Get count of unique backers across pledges and receipts for a campaign
+   */
+  getUniqueBackerCount(campaignId: string): number {
+    return this.db.getUniqueBackerCount(campaignId);
+  }
+
+  /**
    * Get current block number via direct RPC call.
    * Uses raw JSON-RPC instead of client.getTip() because CCC's ClientPublicTestnet
    * returns the testnet tip even when configured with a custom (devnet) URL.
