@@ -43,12 +43,21 @@ Build order follows natural dependency chain: on-chain contracts → off-chain i
 **Requirements:** BUG-01, BUG-02, BUG-03, BUG-04, BUG-05
 **UI hint:** yes
 **Canonical refs:** docs/ProjectPlan.md §Phase 15.5
+**Plans:** 5 plans in 2 waves
+
+Plans:
+- [ ] 04-01-PLAN.md — BUG-03: Add distribution trigger buttons (Release/Refund) to finalized campaigns, visible to all users
+- [ ] 04-02-PLAN.md — BUG-05: Fix backer count calculation to include both pledges and receipts via indexer API
+- [ ] 04-03-PLAN.md — BUG-04: Add cost breakdown display to pledge form (pledge + receipt + cell + fee)
+- [ ] 04-04-PLAN.md — BUG-02: Fix campaign cell capacity leak — return excess capacity to creator after finalization
+- [ ] 04-05-PLAN.md — BUG-01: Defer permissionless finalization to v1.2, document limitation and v1.2 approach
+
 **Success criteria:**
-1. "Trigger Release" and "Trigger Refund" buttons appear on finalized campaigns — any wallet can trigger, funds move to correct destination
-2. Campaign cell capacity returns to creator after finalization, not to the finalizer
-3. Pledge form shows total cost breakdown (pledge + receipt cell + fee) before wallet popup
-4. Any wallet can finalize expired campaigns (not just the creator)
-5. Backer count displays correctly on campaign listing cards
+1. "Trigger Release" and "Trigger Refund" buttons appear on finalized campaigns — any wallet can trigger, funds move to correct destination (BUG-03)
+2. Campaign cell capacity returns to creator after finalization, not to the finalizer (BUG-02)
+3. Pledge form shows total cost breakdown (pledge + receipt cell + fee) before wallet popup (BUG-04)
+4. Permissionless finalization deferred to v1.2; creator-only finalization documented with v1.2 roadmap (BUG-01)
+5. Backer count displays correctly on campaign listing cards, counting unique backers across pledges and receipts (BUG-05)
 
 ## Requirement Coverage Validation
 
@@ -62,4 +71,5 @@ All 20 v1.1 requirements are mapped:
 | **Total** | | **20** |
 
 ---
+
 *Created: 2026-03-26 | Granularity: coarse | Parallelization: enabled*
