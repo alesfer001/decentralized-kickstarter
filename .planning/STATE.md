@@ -13,12 +13,13 @@ Core value: Backers' funds are automatically routed to the correct destination (
 - Phase 4: Started 2026-04-06
 
 ## Last Session
-- **Stopped at:** Phase 04 Plan 03 completed
-- **Completed:** 04-03-SUMMARY.md created (Cost Breakdown UX)
-- **Session date:** 2026-04-06T11:27:00Z
+- **Stopped at:** Phase 04 Plan 02 completed
+- **Completed:** 04-02-SUMMARY.md created (Accurate Backer Count)
+- **Session date:** 2026-04-06T14:35:00Z
 
 ## Completed Plans in Phase 4
 - Plan 01: BUG-03 Distribution Trigger Buttons (COMPLETED 2026-04-06)
+- Plan 02: BUG-05 Accurate Backer Count (COMPLETED 2026-04-06)
 - Plan 03: BUG-04 Receipt Cost Breakdown UX (COMPLETED 2026-04-06)
 - Plan 04: BUG-02 Campaign Cell Capacity Leak Fix (COMPLETED 2026-04-06)
 - Plan 05: BUG-01 Permissionless Finalization (documented, deferred to v1.2)
