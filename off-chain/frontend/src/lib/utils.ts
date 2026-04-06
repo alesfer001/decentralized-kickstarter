@@ -222,3 +222,56 @@ export function getDistributionSummary(
 
   return `${handledCount}/${totalPledges} pledges distributed`;
 }
+
+/**
+ * Cost breakdown for pledge creation
+ * Pledge amount + pledge cell capacity + receipt cell capacity + estimated fee
+ * Values returned in shannons (1 CKB = 100,000,000 shannons)
+ */
+export interface CostBreakdown {
+  pledgeAmount: bigint;
+  pledgeCellCapacity: bigint;
+  receiptCellCapacity: bigint;
+  estimatedFee: bigint;
+  totalCost: bigint;
+}
+
+/**
+ * Calculate cost breakdown for pledge creation
+ * Pledge amount + pledge cell capacity + receipt cell capacity + estimated fee
+ * Values returned in shannons (1 CKB = 100,000,000 shannons)
+ */
+export function calculateCostBreakdown(pledgeAmountCkb: number | string): CostBreakdown {
+  // Convert input CKB to shannons
+  const pledgeAmount = BigInt(Math.floor(Number(pledgeAmountCkb) * 100000000));
+
+  // Constants matching transaction builder (serializer.ts calculateCellCapacity)
+  // pledgeBaseCapacity = calculateCellCapacity(72, true, 65)
+  // formula: max(ceil((8+72+65+65)*1.2), 61) * 1e8
+  const PLEDGE_CELL_CAPACITY = BigInt(Math.max(Math.ceil((8 + 72 + 65 + 65) * 1.2), 61)) * BigInt(100000000);
+
+  // receiptCapacity = calculateCellCapacity(40, true, 65)
+  // formula: max(ceil((8+40+65+65)*1.2), 61) * 1e8
+  const RECEIPT_CELL_CAPACITY = BigInt(Math.max(Math.ceil((8 + 40 + 65 + 65) * 1.2), 61)) * BigInt(100000000);
+
+  // Estimated fee (conservative: ~1 KB transaction at 1000 shannons/KB)
+  const ESTIMATED_FEE = BigInt(1000);
+
+  const totalCost = pledgeAmount + PLEDGE_CELL_CAPACITY + RECEIPT_CELL_CAPACITY + ESTIMATED_FEE;
+
+  return {
+    pledgeAmount,
+    pledgeCellCapacity: PLEDGE_CELL_CAPACITY,
+    receiptCellCapacity: RECEIPT_CELL_CAPACITY,
+    estimatedFee: ESTIMATED_FEE,
+    totalCost,
+  };
+}
+
+/**
+ * Format BigInt shannon values as CKB string with 2 decimal places
+ */
+export function formatCost(shannons: bigint): string {
+  const ckb = Number(shannons) / 100000000;
+  return ckb.toFixed(2);
+}
