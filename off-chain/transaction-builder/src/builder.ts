@@ -165,6 +165,7 @@ export class TransactionBuilder {
   /**
    * Finalize a campaign (transition from Active to Success/Failed)
    * Consumes the old campaign cell and creates a new one with updated status.
+   * Returns excess capacity from the campaign cell to the creator as a change output.
    */
   async finalizeCampaign(signer: ccc.Signer, params: FinalizeCampaignParams): Promise<string> {
     console.log("Building finalize campaign transaction...");
@@ -177,17 +178,55 @@ export class TransactionBuilder {
     const address = await signer.getRecommendedAddress();
     const lockScript = (await ccc.Address.fromString(address, this.client)).script;
 
-    // Calculate capacity for the campaign cell (65 bytes header + metadata)
+    // Calculate minimum capacity for the campaign cell (65 bytes header + metadata)
     const metadataSize = (params.campaignData.title || params.campaignData.description) ? getMetadataSize(params.campaignData.title, params.campaignData.description) : 0;
     const dataSize = 65 + metadataSize;
-    const capacity = calculateCellCapacity(dataSize, true, 65);
+    const minCapacity = calculateCellCapacity(dataSize, true, 65);
+    console.log(`Minimum capacity required: ${minCapacity} shannons`);
 
-    // Fetch the original campaign cell to preserve TypeID args
+    // Fetch the original campaign cell to preserve TypeID args and get original capacity
     const campaignTx = await this.client.getTransaction(params.campaignOutPoint.txHash);
     const originalOutput = campaignTx!.transaction!.outputs[params.campaignOutPoint.index];
     const typeIdArgs = originalOutput.type!.args;
+    const originalCapacity = BigInt(originalOutput.capacity);
+    console.log(`Original campaign cell capacity: ${originalCapacity} shannons`);
 
-    // Build the transaction: consume old campaign cell, create new one with updated status
+    // Calculate excess capacity to return to creator
+    const excessCapacity = originalCapacity - minCapacity;
+    console.log(`Excess capacity to return to creator: ${excessCapacity} shannons`);
+
+    // Build outputs array: campaign cell + creator change output (if excess > 0)
+    const outputs: any[] = [
+      {
+        capacity: minCapacity,
+        lock: lockScript,
+        type: {
+          codeHash: this.campaignContract.codeHash,
+          hashType: this.campaignContract.hashType,
+          args: typeIdArgs,
+        },
+      },
+    ];
+
+    const outputsData: string[] = [newCampaignData];
+
+    // Add creator change output if there's excess capacity
+    if (excessCapacity > 0n) {
+      console.log("Adding creator change output with excess capacity");
+
+      // Reconstruct creator's lock script from creatorLockHash
+      // Use default SECP256K1 lock script parameters
+      outputs.push({
+        capacity: excessCapacity,
+        lock: {
+          codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+          hashType: "type",
+          args: params.campaignData.creatorLockHash,
+        },
+      });
+    }
+
+    // Build the transaction: consume old campaign cell, create new one with updated status + change
     const tx = ccc.Transaction.from({
       inputs: [
         {
@@ -197,18 +236,8 @@ export class TransactionBuilder {
           },
         },
       ],
-      outputs: [
-        {
-          capacity,
-          lock: lockScript,
-          type: {
-            codeHash: this.campaignContract.codeHash,
-            hashType: this.campaignContract.hashType,
-            args: typeIdArgs,
-          },
-        },
-      ],
-      outputsData: [newCampaignData],
+      outputs,
+      outputsData,
       cellDeps: [
         {
           outPoint: {
