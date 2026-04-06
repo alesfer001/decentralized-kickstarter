@@ -1001,18 +1001,61 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - [x] **Utilities** — Distribution status labels/colors, explorer URL helper
 - [x] **E2E Scenarios** — Scenario 6 (trustless distribution UX) + Scenario 7 (receipt display)
 
-#### 15.4: Testnet Deployment (Pending)
-- [ ] Deploy v1.1 contracts to CKB testnet (Pudge) via `scripts/deploy-contracts.ts`
-- [ ] Update Render indexer env vars (CAMPAIGN_CODE_HASH, PLEDGE_CODE_HASH, RECEIPT_CODE_HASH, PLEDGE_LOCK_CODE_HASH)
-- [ ] Redeploy Vercel frontend with updated env vars
-- [ ] Run `test-v1.1-lifecycle.ts` against testnet
+#### 15.4: Testnet Deployment ✓ (Partial — bugs found)
+- [x] Deploy v1.1 contracts to CKB testnet (Pudge) — all 4 contracts (campaign, pledge, pledge-lock, receipt)
+  - Campaign: `0x6c766909289c2e199243648926d2f9ccfc8c925cb556e30a89499b023d621e39`
+  - Pledge: `0x029f1e497444f52bb7e440c65b3712bf0f629880db60d9592568e9a31ce950ce`
+  - Pledge-Lock: `0x3bb066cda4600d9709c195f28fb11eca22367d590a6139c5fc3791932df66066`
+  - Receipt: `0x67ca84f10c9bf7ecbed480ebedb0f6e380cc6c11825f2f77683b72ffbcaa352f`
+- [x] Update Render indexer env vars (5 vars: CAMPAIGN_CODE_HASH, PLEDGE_CODE_HASH, PLEDGE_LOCK_CODE_HASH, RECEIPT_CODE_HASH, CKB_RPC_URL)
+- [x] Redeploy Vercel frontend with updated env vars (10 vars: 4 code hashes + 4 tx hashes + API_URL + NETWORK)
+- [x] Testnet E2E testing with real JoyID wallets (2 accounts)
+- [ ] Run `test-v1.1-lifecycle.ts` against testnet (blocked by bugs below)
 - [ ] Update Nervos Talk thread with v1.1 progress
-- [ ] External tester validates full v1.1 lifecycle without manual fund routing
+- [ ] External tester validates full v1.1 lifecycle
 
-### Phase 16: Grant Application & Launch
-- [ ] Deploy to CKB mainnet
-- [ ] Prepare grant proposal for CKB Community Fund DAO
-- [ ] Community building and marketing
+**Testnet E2E results (2026-04-03):**
+
+Passed:
+- [x] Campaign creation — title, description, goal, deadline all stored correctly
+- [x] Pledge with receipt — 600 CKB pledge created receipt cell, indexer picked up both
+- [x] Finalization (success path) — "Funded" green badge, distribution status section visible
+- [x] Finalization (failure path) — "Failed" red badge, 100/10,000 CKB (1%)
+- [x] Home page listing — both campaigns with correct badges, progress bars, stats
+- [x] Trustless UI — no manual release/refund buttons, "Locked" badges on pledges
+- [x] Receipt display — "Receipt: N CKB" inline with each pledge row, explorer links
+
+Bugs found (must fix before v1.1 is usable):
+- [ ] **BUG-1: Finalization not permissionless** — campaign cell uses standard secp256k1 lock (creator's), so only the creator can finalize. Backer gets lock script error code 4. Blocks Phase 16 auto-finalization bot. Fix: custom campaign lock script or alternative approach.
+- [ ] **BUG-2: Campaign cell capacity leak** — finalizer receives ~474 CKB excess from campaign cell. Creator's CKB is routed as change to whoever signs the finalize tx instead of preserved.
+- [ ] **BUG-3: No distribution trigger in UI** — after finalization, pledges stay "Locked" with "Distribution pending". No buttons to trigger `permissionlessRelease` / `permissionlessRefund`. Neither creator nor backer can receive CKB through the UI. Critical blocker.
+- [ ] **BUG-4: Receipt cell cost not shown** — pledging 600 CKB costs ~900 CKB (pledge + ~300 CKB receipt cell). Users confused by wallet showing higher amount. Need cost breakdown in pledge form.
+- [ ] **BUG-5: Backer count shows 0** on home page campaign cards (minor indexer issue).
+
+### Phase 15.5: v1.1 Bug Fixes (Required before v1.1 is usable)
+
+#### 15.5.1: Add Distribution Trigger Buttons (BUG-3 — Critical)
+- [ ] Add "Trigger Release" button on funded campaigns (calls `permissionlessRelease`)
+- [ ] Add "Trigger Refund" button on failed campaigns (calls `permissionlessRefund`)
+- [ ] Buttons visible to everyone (not just creator/backer) — permissionless
+- [ ] Update pledge status badges after distribution (Locked → Released/Refunded)
+
+#### 15.5.2: Fix Campaign Cell Capacity (BUG-2)
+- [ ] Investigate `finalizeCampaign()` in transaction builder
+- [ ] Ensure excess campaign cell capacity goes back to creator, not finalizer
+
+#### 15.5.3: Receipt Cost UX (BUG-4)
+- [ ] Show estimated total cost in pledge form (pledge amount + receipt cell + fee)
+- [ ] Pre-confirmation breakdown before wallet popup
+
+#### 15.5.4: Permissionless Finalization (BUG-1)
+- [ ] Design approach: custom campaign lock script, or alternative mechanism
+- [ ] Required for Phase 16 auto-finalization bot
+
+#### 15.5.5: Backer Count Fix (BUG-5 — Minor)
+- [ ] Investigate indexer backer count on campaign listing endpoint
+
+### Phase 16: Automatic Finalization Bot
 
 ---
 
@@ -1202,3 +1245,22 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - Off-chain fee collection is simpler but requires trust in the platform operator
 - Treasury governance: who controls the treasury? Multisig? Future DAO token?
 - Fee must not make the platform uncompetitive with alternatives
+
+**2026-04-03:** Phase 15.4 — v1.1 Testnet Deployment & E2E Testing
+- Generated new testnet deployer account, funded via Nervos Pudge Faucet (100,000 CKB)
+- Deployed all 4 v1.1 contracts to CKB testnet (campaign, pledge, pledge-lock, receipt)
+- Updated Render indexer env vars (5 vars) and Vercel frontend env vars (10 vars) via CLI
+- Testnet E2E testing with 2 real JoyID wallets:
+  - Campaign creation: "v1.1 Testnet E2E Test" (500 CKB goal) ✓
+  - Pledge with receipt: 600 CKB pledge (120% funded), receipt cell created ✓
+  - Finalization (success): status → "Funded" green badge, distribution status visible ✓
+  - Failed campaign: "v1.1 Failed Campaign Test" (10,000 CKB goal, 100 CKB pledge → 1%) ✓
+  - Finalization (failure): status → "Failed" red badge ✓
+  - Home page listing: both campaigns with correct badges, progress, stats ✓
+  - Trustless UI: no manual release/refund buttons, "Locked" badges, receipt display ✓
+- 5 bugs found — see Phase 15.5 for details:
+  - BUG-1: Finalization not permissionless (only creator can finalize)
+  - BUG-2: Campaign cell capacity leaks to finalizer (~474 CKB)
+  - BUG-3: No distribution trigger UI (funds stuck after finalization) — CRITICAL
+  - BUG-4: Receipt cell cost not shown in pledge form (user confusion)
+  - BUG-5: Backer count shows 0 on home page cards (minor)
