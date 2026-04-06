@@ -15,7 +15,6 @@ import {
   getFundingProgress,
   blocksToTimeEstimate,
   blockToRelativeTime,
-  getUniqueBackerCount,
   getPledgeDistributionLabel,
   getPledgeDistributionColor,
   getExplorerTxUrl,
@@ -754,7 +753,7 @@ export default function CampaignDetailPage() {
   const blocksRemaining = currentBlock !== null
     ? BigInt(campaign.deadlineBlock) - currentBlock
     : null;
-  const backerCount = getUniqueBackerCount(pledges);
+  const backerCount = campaign?.backerCount ?? 0;
 
   /** Derive distribution counts from receipts and live pledges */
   const receiptCount = receipts.length;
