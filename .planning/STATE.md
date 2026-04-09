@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: Executing Phase 05
-stopped_at: Phase 05 Plan 02 completed (campaign-lock deployment and integration)
-last_updated: "2026-04-10T15:30:00.000Z"
+stopped_at: Phase 05 Plan 04 completed (frontend permissionless finalization UI)
+last_updated: "2026-04-10T16:45:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 21
-  completed_plans: 17
+  completed_plans: 19
 ---
 
 # Project State
@@ -17,8 +17,8 @@ progress:
 ## Current Phase
 
 Phase: 05
-Current Plan: 02
-Next action: /gsd:execute-phase 05 (continue with plan 05-03)
+Current Plan: 04
+Next action: /gsd:execute-phase 05 (continue with plan 05-05)
 
 ## Project Reference
 
@@ -60,6 +60,16 @@ Core value: Backers' funds are automatically routed to the correct destination (
   - Deployment script ready for actual deployment
   - Placeholder code hash in config, ready to be filled on deployment
 
+- Plan 03: [Parallel execution - running concurrently with other tasks]
+
+- Plan 04: Frontend Permissionless Finalization UI (COMPLETED 2026-04-10)
+  - 3 tasks completed: add campaign-lock constant, remove isCreator check, verify compilation
+  - 3 commits: 3aa039a, 5342d5c, f793fe2
+  - Campaign finalize button now visible to all users when campaign expired
+  - isCreator check removed from finalization logic
+  - Frontend builds without TypeScript errors
+  - Ready for devnet E2E testing
+
 ## Decisions Made
 
 - **D-06 implemented:** finalizeCampaign creates change output routing excess to creator
@@ -67,4 +77,6 @@ Core value: Backers' funds are automatically routed to the correct destination (
 - **D-11 confirmed:** Campaign cells locked with creator's lock script
 - **D-12 accepted:** v1.2 approach — custom campaign-lock contract
 - **D-13 implemented:** Frontend clarification + creator-only workaround
+- **D-14 implemented:** Finalize button shown to all users (not just creator) when campaign expired
+- **D-15 implemented:** Campaign-lock contract code hash added to frontend constants
 - **Auto-selected:** Option A (Defer to v1.2) for BUG-01 checkpoint decision

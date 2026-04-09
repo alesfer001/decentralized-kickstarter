@@ -68,8 +68,9 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md — Campaign Lock Script Contract implementation (COMPLETED 2026-04-09)
-- [ ] 05-02-PLAN.md — Deploy campaign-lock to devnet and testnet
+- [x] 05-02-PLAN.md — Deploy campaign-lock to devnet and testnet (COMPLETED 2026-04-10)
 - [ ] 05-03-PLAN.md — Integrate campaign-lock with transaction builder and frontend
+- [x] 05-04-PLAN.md — Frontend permissionless finalization UI (COMPLETED 2026-04-10)
 
 **Success criteria:**
 1. Custom campaign-lock script compiles and allows spending when current block >= campaign deadline AND type script validates Success/Failed transition
