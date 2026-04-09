@@ -20,9 +20,9 @@ const campaignContract: ContractInfo = {
 };
 
 const campaignLockContract: ContractInfo = {
-  codeHash: "0x6c766909289c2e199243648926d2f9ccfc8c925cb556e30a89499b023d621e39",
+  codeHash: "0x64397e46dda27be2864e60500fae131852c8e43ac5b1a30aa4c8bd72b4a52822",
   hashType: "data2",
-  txHash: "0xc211dfb6565bf7833bc66b90233b19e9c917d6990976ef187d3c25eb1e6da200",
+  txHash: "0x5c2ce449446ac9b6aee69619f60c98b8c1cc687f07461616a07206cedfbb28dc",
   index: 0,
 };
 
@@ -297,12 +297,21 @@ async function testNonCreatorPermissionlessFinalization() {
   console.log(`   Campaign TX: ${campaignTxHash}`);
   await waitForTx(client, campaignTxHash);
 
-  // Step 2: Creator pledges to campaign
-  console.log("\n2. Creator pledges 150 CKB (exceeds 100 CKB goal)");
-  const pledgeTxHash = await builder.createPledge(creatorSigner, {
-    campaignId: campaignTxHash,
+  // Step 2: Creator pledges to campaign using v1.1 pledge-lock (enables permissionless release)
+  console.log("\n2. Creator pledges 150 CKB via createPledgeWithReceipt (v1.1 pledge-lock)");
+
+  // Get campaign type script hash for pledge-lock args
+  const campaignTx = await client.getTransaction(campaignTxHash);
+  const campaignOutput = campaignTx!.transaction!.outputs[0];
+  const campaignTypeScriptHash = ccc.Script.from(campaignOutput.type!).hash();
+
+  const pledgeTxHash = await builder.createPledgeWithReceipt(creatorSigner, {
+    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
+    campaignTypeScriptHash,
+    deadlineBlock: deadline,
     backerLockHash: creatorLockHash, // Creator pledging to own campaign
     amount: BigInt(150 * 100000000), // 150 CKB
+    campaignId: campaignTxHash,
   });
   console.log(`   Pledge TX: ${pledgeTxHash}`);
   await waitForTx(client, pledgeTxHash);
@@ -371,18 +380,30 @@ async function testNonCreatorPermissionlessFinalization() {
     throw new Error("Non-creator finalization should succeed after deadline");
   }
 
-  // Step 6: Non-creator calls permissionlessRelease
+  // Step 6: Non-creator calls permissionlessRelease (v1.1 — pledge-lock routes to creator)
   console.log("\n6. Non-creator (Account B) triggers permissionless release");
-  const pledgeDataSize = 72;
-  const baseCapacity = BigInt(Math.ceil((8 + pledgeDataSize + 65 + 65) * 1.2)) * BigInt(100000000);
-  const pledgeCapacity = baseCapacity + BigInt(150 * 100000000);
+
+  // Get pledge cell capacity and finalized campaign outpoint
+  const pledgeTx = await client.getTransaction(pledgeTxHash);
+  const pledgeOutput = pledgeTx!.transaction!.outputs[0];
+  const pledgeCapacity = BigInt(pledgeOutput.capacity);
+
+  // Get the creator's actual lock script (not just the hash)
+  const creatorLockScriptObj = (await ccc.Address.fromString(creatorAddr, client)).script;
+  const creatorLockScript = {
+    codeHash: creatorLockScriptObj.codeHash,
+    hashType: creatorLockScriptObj.hashType,
+    args: creatorLockScriptObj.args,
+  };
 
   let releaseTxHash: string;
   try {
-    releaseTxHash = await builder.releasePledgeToCreator(backerSigner, {
+    releaseTxHash = await builder.permissionlessRelease(backerSigner, {
       pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
       pledgeCapacity,
-      creatorAddress,
+      campaignCellDep: { txHash: finalizeTxHash, index: 0 },
+      creatorLockScript,
+      deadlineBlock: deadline,
     });
     console.log(`   ✓ Permissionless release succeeded: ${releaseTxHash}`);
     console.log(`   Funds routed to creator without creator participation`);

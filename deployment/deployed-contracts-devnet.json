@@ -7,9 +7,9 @@
     "index": 0
   },
   "campaignLock": {
-    "codeHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-    "hashType": "data",
-    "txHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "codeHash": "0x64397e46dda27be2864e60500fae131852c8e43ac5b1a30aa4c8bd72b4a52822",
+    "hashType": "data2",
+    "txHash": "0x5c2ce449446ac9b6aee69619f60c98b8c1cc687f07461616a07206cedfbb28dc",
     "index": 0
   },
   "pledge": {

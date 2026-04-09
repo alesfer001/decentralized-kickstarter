@@ -208,9 +208,11 @@ export class TransactionBuilder {
     const excessCapacity = originalCapacity - minCapacity;
     console.log(`Excess capacity to return to creator: ${excessCapacity} shannons`);
 
-    // Calculate since value from deadline block (absolute block mode)
+    // Since value: raw deadline block number (same pattern as pledge-lock)
+    // CKB devnet doesn't enforce since at consensus layer; the campaign-lock script
+    // reads the since value via load_input_since() and validates against the deadline in args.
     const deadlineBlock = params.campaignData.deadlineBlock;
-    const sinceValue = BigInt(deadlineBlock) << 1n;  // (deadline_block << 1) for absolute block mode
+    const sinceValue = BigInt(deadlineBlock);
     console.log(`Since value for deadline ${deadlineBlock}: ${sinceValue}`);
 
     // Encode deadline block as lock args (8 bytes, LE) - same as createCampaign
@@ -259,7 +261,7 @@ export class TransactionBuilder {
             txHash: params.campaignOutPoint.txHash,
             index: params.campaignOutPoint.index,
           },
-          since: sinceValue.toString(),  // Set since field for campaign-lock validation
+          since: sinceValue,  // Raw deadline block number
         },
       ],
       outputs,
