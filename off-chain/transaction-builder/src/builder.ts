@@ -9,6 +9,7 @@ import { createCkbClient, NetworkType } from "./ckbClient";
 export class TransactionBuilder {
   private client: ccc.Client;
   private campaignContract: ContractInfo;
+  private campaignLockContract: ContractInfo;
   private pledgeContract: ContractInfo;
   private pledgeLockContract: ContractInfo;
   private receiptContract: ContractInfo;
@@ -16,12 +17,14 @@ export class TransactionBuilder {
   constructor(
     client: ccc.Client,
     campaignContract: ContractInfo,
+    campaignLockContract: ContractInfo,
     pledgeContract: ContractInfo,
     pledgeLockContract: ContractInfo,
     receiptContract: ContractInfo
   ) {
     this.client = client;
     this.campaignContract = campaignContract;
+    this.campaignLockContract = campaignLockContract;
     this.pledgeContract = pledgeContract;
     this.pledgeLockContract = pledgeLockContract;
     this.receiptContract = receiptContract;
@@ -779,6 +782,13 @@ export class TransactionBuilder {
   }
 
   /**
+   * Helper: Get campaign lock contract info
+   */
+  getCampaignLockContract(): ContractInfo {
+    return this.campaignLockContract;
+  }
+
+  /**
    * Helper: Get lock hash from address
    */
   async getLockHashFromAddress(address: string): Promise<string> {
@@ -818,6 +828,7 @@ export class TransactionBuilder {
  *
  * @param rpcUrl - RPC URL for the CKB node
  * @param campaignContract - Campaign contract info
+ * @param campaignLockContract - Campaign lock contract info (v1.1)
  * @param pledgeContract - Pledge contract info
  * @param pledgeLockContract - Pledge lock contract info (v1.1)
  * @param receiptContract - Receipt contract info (v1.1)
@@ -826,6 +837,7 @@ export class TransactionBuilder {
 export function createTransactionBuilder(
   rpcUrl: string,
   campaignContract: ContractInfo,
+  campaignLockContract: ContractInfo,
   pledgeContract: ContractInfo,
   pledgeLockContract: ContractInfo,
   receiptContract: ContractInfo,
@@ -837,5 +849,5 @@ export function createTransactionBuilder(
   );
 
   const client = createCkbClient(resolvedNetwork, rpcUrl);
-  return new TransactionBuilder(client, campaignContract, pledgeContract, pledgeLockContract, receiptContract);
+  return new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
 }

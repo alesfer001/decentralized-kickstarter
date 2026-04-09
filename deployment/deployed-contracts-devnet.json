@@ -1,0 +1,30 @@
+{
+  "network": "devnet",
+  "deployedAt": "2026-04-03T12:36:19.590Z",
+  "campaign": {
+    "codeHash": "0x6c766909289c2e199243648926d2f9ccfc8c925cb556e30a89499b023d621e39",
+    "txHash": "0xc211dfb6565bf7833bc66b90233b19e9c917d6990976ef187d3c25eb1e6da200",
+    "index": 0
+  },
+  "campaignLock": {
+    "codeHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "hashType": "data",
+    "txHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "index": 0
+  },
+  "pledge": {
+    "codeHash": "0x029f1e497444f52bb7e440c65b3712bf0f629880db60d9592568e9a31ce950ce",
+    "txHash": "0x66504a15e2b5774468336055fda4714e764347485c4aea1953a141bc069bf568",
+    "index": 0
+  },
+  "pledgeLock": {
+    "codeHash": "0x3bb066cda4600d9709c195f28fb11eca22367d590a6139c5fc3791932df66066",
+    "txHash": "0xcd339452d46889074aa2cf607a73ee99fe9a659f5b421407066efd69db3df9b3",
+    "index": 0
+  },
+  "receipt": {
+    "codeHash": "0x67ca84f10c9bf7ecbed480ebedb0f6e380cc6c11825f2f77683b72ffbcaa352f",
+    "txHash": "0x658bd0fcf22963ae9ff2cd1688541a061431f00d3943f14aaa43a96c1d929049",
+    "index": 0
+  }
+}
