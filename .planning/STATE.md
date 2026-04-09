@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: Executing Phase 05
-stopped_at: Phase 05 Plan 01 completed (campaign-lock contract)
-last_updated: "2026-04-09T11:10:45.869Z"
+stopped_at: Phase 05 Plan 02 completed (campaign-lock deployment and integration)
+last_updated: "2026-04-10T15:30:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 21
-  completed_plans: 16
+  completed_plans: 17
 ---
 
 # Project State
@@ -17,8 +17,8 @@ progress:
 ## Current Phase
 
 Phase: 05
-Current Plan: 01
-Next action: /gsd:execute-phase 05 (continue with plan 05-02)
+Current Plan: 02
+Next action: /gsd:execute-phase 05 (continue with plan 05-03)
 
 ## Project Reference
 
@@ -52,6 +52,13 @@ Core value: Backers' funds are automatically routed to the correct destination (
   - 3 tasks completed: scaffold, implementation, tests
   - 3 commits: 7963b58, a39414f, c878ee8
   - Contract ready for deployment and integration
+
+- Plan 02: Campaign-Lock Deployment and Integration (COMPLETED 2026-04-10)
+  - 2 tasks completed: deployment config updates, transaction builder updates
+  - 4 commits: 618be07, ca55f1a, d8197fd, 00822ec
+  - Campaign-lock integrated into TransactionBuilder
+  - Deployment script ready for actual deployment
+  - Placeholder code hash in config, ready to be filled on deployment
 
 ## Decisions Made
 
