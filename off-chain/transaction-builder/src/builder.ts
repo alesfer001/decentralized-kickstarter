@@ -1,6 +1,6 @@
 import { ccc } from "@ckb-ccc/core";
 import { CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams, CreatePledgeWithReceiptParams, PermissionlessReleaseParams, PermissionlessRefundParams, MergeContributionsParams } from "./types";
-import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize, serializeReceiptData, serializePledgeLockArgs } from "./serializer";
+import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize, serializeReceiptData, serializePledgeLockArgs, encodeDeadlineBlockAsLockArgs } from "./serializer";
 import { createCkbClient, NetworkType } from "./ckbClient";
 
 /**
@@ -49,9 +49,16 @@ export class TransactionBuilder {
     const capacity = calculateCellCapacity(dataSize, true, 65);
     console.log(`Required capacity: ${capacity} shannons (${Number(capacity) / 100000000} CKB)`);
 
-    // Get the lock script from signer
-    const lock = await signer.getRecommendedAddress();
-    const lockScript = (await ccc.Address.fromString(lock, this.client)).script;
+    // Encode deadline block as lock args (8 bytes, LE)
+    const deadlineArgs = encodeDeadlineBlockAsLockArgs(params.deadlineBlock);
+    console.log(`Deadline block ${params.deadlineBlock} encoded as lock args: ${deadlineArgs}`);
+
+    // Campaign-lock script: code hash + deadline args
+    const lockScript = {
+      codeHash: this.campaignLockContract.codeHash,
+      hashType: this.campaignLockContract.hashType,
+      args: deadlineArgs,
+    };
 
     // Build the transaction
     const tx = ccc.Transaction.from({
@@ -68,6 +75,13 @@ export class TransactionBuilder {
       ],
       outputsData: [campaignData],
       cellDeps: [
+        {
+          outPoint: {
+            txHash: this.campaignLockContract.txHash,
+            index: this.campaignLockContract.index,
+          },
+          depType: "code",
+        },
         {
           outPoint: {
             txHash: this.campaignContract.txHash,
@@ -177,10 +191,6 @@ export class TransactionBuilder {
     const newCampaignData = serializeCampaignDataWithStatus(params.campaignData, params.newStatus);
     console.log(`New campaign data: ${newCampaignData}`);
 
-    // Get the signer's lock script
-    const address = await signer.getRecommendedAddress();
-    const lockScript = (await ccc.Address.fromString(address, this.client)).script;
-
     // Calculate minimum capacity for the campaign cell (65 bytes header + metadata)
     const metadataSize = (params.campaignData.title || params.campaignData.description) ? getMetadataSize(params.campaignData.title, params.campaignData.description) : 0;
     const dataSize = 65 + metadataSize;
@@ -198,11 +208,23 @@ export class TransactionBuilder {
     const excessCapacity = originalCapacity - minCapacity;
     console.log(`Excess capacity to return to creator: ${excessCapacity} shannons`);
 
+    // Calculate since value from deadline block (absolute block mode)
+    const deadlineBlock = params.campaignData.deadlineBlock;
+    const sinceValue = BigInt(deadlineBlock) << 1n;  // (deadline_block << 1) for absolute block mode
+    console.log(`Since value for deadline ${deadlineBlock}: ${sinceValue}`);
+
+    // Encode deadline block as lock args (8 bytes, LE) - same as createCampaign
+    const deadlineArgs = encodeDeadlineBlockAsLockArgs(deadlineBlock);
+
     // Build outputs array: campaign cell + creator change output (if excess > 0)
     const outputs: any[] = [
       {
         capacity: minCapacity,
-        lock: lockScript,
+        lock: {
+          codeHash: this.campaignLockContract.codeHash,
+          hashType: this.campaignLockContract.hashType,
+          args: deadlineArgs,
+        },
         type: {
           codeHash: this.campaignContract.codeHash,
           hashType: this.campaignContract.hashType,
@@ -237,11 +259,19 @@ export class TransactionBuilder {
             txHash: params.campaignOutPoint.txHash,
             index: params.campaignOutPoint.index,
           },
+          since: sinceValue.toString(),  // Set since field for campaign-lock validation
         },
       ],
       outputs,
       outputsData,
       cellDeps: [
+        {
+          outPoint: {
+            txHash: this.campaignLockContract.txHash,
+            index: this.campaignLockContract.index,
+          },
+          depType: "code",
+        },
         {
           outPoint: {
             txHash: this.campaignContract.txHash,

@@ -24,6 +24,14 @@ function u16ToHexLE(value: number): string {
 }
 
 /**
+ * Encode deadline block as campaign-lock script args (8 bytes, LE with 0x prefix)
+ * Used for both createCampaign() and finalizeCampaign() lock script construction
+ */
+export function encodeDeadlineBlockAsLockArgs(deadlineBlock: bigint | number): string {
+  return "0x" + u64ToHexLE(BigInt(deadlineBlock));
+}
+
+/**
  * Serialize campaign metadata (title + description) to hex string.
  * Layout: title_len (u16 LE) + title (UTF-8) + description_len (u16 LE) + description (UTF-8)
  */
