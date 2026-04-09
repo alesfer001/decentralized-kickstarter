@@ -28,6 +28,7 @@ interface ContractsConfig {
   campaign: ContractInfo;
   pledge: ContractInfo;
   pledgeLock: ContractInfo;
+  campaignLock: ContractInfo;
   receipt: ContractInfo;
 }
 
@@ -42,6 +43,9 @@ const PLEDGE_CODE_HASH =
 const PLEDGE_LOCK_CODE_HASH =
   process.env.NEXT_PUBLIC_PLEDGE_LOCK_CODE_HASH ||
   "0x3bb066cda4600d9709c195f28fb11eca22367d590a6139c5fc3791932df66066";
+const CAMPAIGN_LOCK_CODE_HASH =
+  process.env.NEXT_PUBLIC_CAMPAIGN_LOCK_CODE_HASH ||
+  "0x0000000000000000000000000000000000000000000000000000000000000000";
 const RECEIPT_CODE_HASH =
   process.env.NEXT_PUBLIC_RECEIPT_CODE_HASH ||
   "0x67ca84f10c9bf7ecbed480ebedb0f6e380cc6c11825f2f77683b72ffbcaa352f";
@@ -52,9 +56,10 @@ function buildNetworkContracts(network: NetworkType): ContractsConfig {
     campaign: "0x8d501828096d4b70a2f032ee04672cf5a75f8771dd1fb2ea23de0ef1519d05d6",
     pledge: "0x304be042daf897898dcf1851e12ecabaa0400f677f0135fe9ec6c727fdc1a9e2",
     pledgeLock: zero,
+    campaignLock: zero,
     receipt: zero,
   };
-  const fallback = network === "devnet" ? devnetDefaults : { campaign: zero, pledge: zero, pledgeLock: zero, receipt: zero };
+  const fallback = network === "devnet" ? devnetDefaults : { campaign: zero, pledge: zero, pledgeLock: zero, campaignLock: zero, receipt: zero };
   return {
     campaign: {
       codeHash: CAMPAIGN_CODE_HASH,
@@ -72,6 +77,12 @@ function buildNetworkContracts(network: NetworkType): ContractsConfig {
       codeHash: PLEDGE_LOCK_CODE_HASH,
       hashType: "data2",
       txHash: process.env.NEXT_PUBLIC_PLEDGE_LOCK_TX_HASH || fallback.pledgeLock,
+      index: 0,
+    },
+    campaignLock: {
+      codeHash: CAMPAIGN_LOCK_CODE_HASH,
+      hashType: "data2",
+      txHash: process.env.NEXT_PUBLIC_CAMPAIGN_LOCK_TX_HASH || fallback.campaignLock,
       index: 0,
     },
     receipt: {
