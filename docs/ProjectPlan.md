@@ -1052,11 +1052,14 @@ Bugs found (must fix before v1.1 is usable):
 - [x] Live-updating breakdown below amount input, before wallet popup
 - [x] Capacity formulas match builder.ts: `max(ceil((8+dataSize+65+65)*1.2), 61) * 1e8`
 
-#### 15.5.4: Permissionless Finalization (BUG-1) — Deferred to v1.2
+#### 15.5.4: Permissionless Finalization (BUG-1) ✓
 - [x] Root cause documented: campaign cell locked with creator's lock script
-- [x] v1.2 approach documented in `docs/IMPLEMENTATION-NOTES.md` (custom campaign-lock contract)
-- [x] Frontend shows "only the campaign creator can finalize" message to non-creators
-- [ ] Implementation deferred — requires new contract + redeployment (out of scope for bug-fix phase)
+- [x] Custom campaign-lock contract implemented (`contracts/campaign-lock/src/main.rs`)
+- [x] Lock validates `since_raw >= deadline_block` (raw comparison, no absolute since flag — devnet rejects absolute since)
+- [x] `createCampaign()` uses campaign-lock as lock script with 8-byte deadline args
+- [x] `finalizeCampaign()` sets since field to raw deadline block number
+- [x] Frontend "Finalize" button visible to all users (removed isCreator check)
+- [x] All 3 devnet E2E tests pass: success lifecycle, failure lifecycle, non-creator permissionless finalization
 
 #### 15.5.5: Backer Count Fix (BUG-5) ✓
 - [x] `getUniqueBackerCount` now uses same linkage pattern as `getPledgesForCampaign` (pledge `campaign_id` is type script hash, not outpoint ID)
@@ -1214,6 +1217,17 @@ Bugs found (must fix before v1.1 is usable):
   - Fund distribution described as automatic/permissionless
   - "Locked" status badges on pledge rows
 
+**2026-04-09:** Phase 5 — Permissionless Finalization (Campaign Lock Script)
+- Created `contracts/campaign-lock/` — minimal lock script that validates `since_raw >= deadline_block` from 8-byte LE args
+- **Key discovery:** CKB OffCKB devnet rejects absolute since values (bit 63 set) with `Immature` error regardless of tip block. Switched to raw deadline block number as since value (same pattern as pledge-lock). Lock script enforces deadline via `load_input_since()`.
+- `createCampaign()` now uses campaign-lock as the cell's lock script (replaces creator's secp256k1 lock)
+- `finalizeCampaign()` sets `since: BigInt(deadlineBlock)` on the campaign cell input
+- Frontend: removed `isCreator` check from finalize button — visible to all users when campaign expired
+- Added `campaignLock` to frontend `CONTRACTS` constants
+- Test 3 (non-creator finalization): Account B finalizes after deadline, triggers permissionless release — funds routed to creator without creator participation
+- All 3 devnet E2E tests pass: success lifecycle, failure lifecycle, non-creator permissionless finalization
+- BUG-1 resolved — unblocks Phase 16 (auto-finalization bot)
+
 ### Phase 16: Automatic Finalization Bot
 
 **Problem:** After the deadline passes, someone must manually click "Finalize Campaign" to transition the on-chain status. While this is permissionless (anyone can do it), it still requires a manual trigger. This creates friction — campaigns sit in "Expired - Needs Finalization" state until someone acts.
@@ -1261,7 +1275,7 @@ Bugs found (must fix before v1.1 is usable):
   - Buttons hidden after all pledges distributed (checks live pledge count, not receipt count)
 - BUG-2: `finalizeCampaign` now creates 2 outputs — excess capacity returned to creator via change cell
 - BUG-4: Pledge form shows live cost breakdown (pledge + pledge cell + receipt cell + fee) before wallet popup
-- BUG-1: Deferred to v1.2 — documented root cause (creator lock script) and proposed custom campaign-lock approach in `docs/IMPLEMENTATION-NOTES.md`
+- BUG-1: Fixed — custom campaign-lock contract deployed, non-creator finalization working on devnet (3 E2E tests pass)
 - BUG-5: `getUniqueBackerCount` fixed — was using SQL with wrong ID format (outpoint vs type script hash), now uses same linkage pattern as other pledge/receipt queries
 - Additional fix: funding progress and backer count preserved after release/refund via receipt amount fallback (pledge cells consumed in UTXO model)
 

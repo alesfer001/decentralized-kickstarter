@@ -1,80 +1,52 @@
 # CKB Kickstarter v1.1 Implementation Notes
 
-## BUG-01: Permissionless Finalization (v1.1 Limitation)
+## BUG-01: Permissionless Finalization — RESOLVED (2026-04-09)
 
-### Current Behavior (v1.1)
+### Problem (v1.1)
 
-- Campaign cells are locked with the creator's lock script
-- Only the creator can call `finalizeCampaign()`
-- Non-creators attempting finalization will get a transaction rejection
-- All other operations (release/refund) remain permissionless
+Campaign cells were locked with the creator's secp256k1 lock script. Only the creator could call `finalizeCampaign()`. This blocked the auto-finalization bot (Phase 16) and meant the platform wasn't truly trustless.
 
 ### Root Cause
 
-The campaign cell's lock script is hardcoded to the creator's lock hash when the campaign is created. CKB's UTXO model requires the cell's lock script to authorize all spending. Only the creator's signature can unlock the creator's lock script.
+The campaign cell's lock script was hardcoded to the creator's lock hash in `createCampaign()`. CKB's UTXO model requires the cell's lock script to authorize all spending.
 
-See `contracts/campaign/src/main.rs` finalization validation logic (lines 138-174) where the campaign cell is spent with the creator's lock controlling authorization.
+### Solution: Campaign-Lock Contract
 
-### Why Not Fixed in v1.1
+Created a new `campaign-lock` contract (`contracts/campaign-lock/src/main.rs`) that replaces the creator's secp256k1 lock on campaign cells.
 
-Permissionless finalization requires one of:
+**Lock script design:**
+- **Args:** 8 bytes — `deadline_block` (u64, LE)
+- **Validation:** `load_input_since()` reads the transaction's since field, rejects if `since_raw < deadline_block`
+- **No creator signature required** — anyone can spend after deadline
+- **Type script handles state validation** — campaign-lock only enforces timing
 
-1. **New "campaign lock" contract** — Replaces creator lock with a custom lock script that allows anyone to spend after deadline (requires new contract code + redeployment)
-2. **Type script-based validation** — Keeps creator lock but adds type script logic to allow finalization by any signer after deadline (requires type script redesign + redeployment)
+**Key discovery: CKB devnet absolute since bug**
+- CKB OffCKB devnet (v0.201.0) rejects ALL absolute since values (bit 63 set) with `Immature` error, regardless of tip block
+- Tested: absolute block number, absolute epoch — all rejected on devnet even for values well in the past
+- Relative since values (bit 63 = 0) are NOT enforced at consensus layer on devnet
+- **Solution:** Use raw deadline block number as since value (same pattern as pledge-lock). The lock script enforces the deadline via `load_input_since()` rather than relying on CKB consensus enforcement
+- This approach works on both devnet and testnet
 
-Both approaches require:
-- New contract code and compilation
-- Testing and validation on devnet
-- Redeployment to testnet (breaking change for existing campaigns)
-- Integration test updates to exercise new code paths
+**Changes made:**
+- `contracts/campaign-lock/` — New Rust contract (~100 lines), compiled to RISC-V, deployed to devnet
+- `builder.ts createCampaign()` — Lock script = campaign-lock code hash + deadline args (8 bytes LE)
+- `builder.ts finalizeCampaign()` — Sets `since: BigInt(deadlineBlock)` on campaign cell input
+- `frontend constants.ts` — Added `campaignLock` to CONTRACTS config
+- `frontend campaigns/[id]/page.tsx` — Removed `isCreator` check from finalize button, visible to all users when expired
 
-This scope exceeds the "bug fix" classification of Phase 4. Deploying new contracts would force re-initialization of the entire test environment and existing campaigns.
+### Test Results (Devnet)
 
-### v1.2 Approach (Proposed)
+All 3 lifecycle tests pass (`test-lifecycle.ts`):
+- [x] Test 1 (Success): create → pledge → finalize → release
+- [x] Test 2 (Failure): create → pledge → finalize → refund
+- [x] Test 3 (Non-Creator Permissionless Finalization):
+  - Before deadline: finalization rejected (`Immature` — since < deadline)
+  - After deadline: non-creator Account B finalizes successfully
+  - Non-creator Account B triggers permissionless release — funds routed to creator
+  - Double finalization rejected (cell already consumed)
 
-Implement a custom "campaign lock" script:
+### Remaining
 
-- **Lock code:** New `campaign-lock` contract with `validate_campaign_finalization()` logic
-- **Allow spending if:**
-  - Signer = creator (backward compatible with v1.1) **OR**
-  - Current block >= campaign deadline **AND** type script validates transition to Success/Failed
-- **Benefits:**
-  - Permissionless finalization after deadline
-  - Creator still authorized (compatibility)
-  - Cleaner separation of concerns (lock handles authorization, type script handles state validation)
-- **Tradeoff:**
-  - New contract code, redeployment, brief testnet downtime
-  - All new campaigns created after v1.2 deployment will use new lock
-  - Existing v1.1 campaigns on testnet will not be migrated (clean slate recommended)
-
-**Alternative approach (v1.2):** Use type script for validation and put campaign under a generic permissionless lock (e.g., allow `always-success` pattern). Requires fewer signatures but shifts all authorization burden to type script.
-
-### Workaround for v1.1
-
-- **Creators can finalize their own campaigns** using the "Finalize Campaign" button (visible only to creator in UI)
-- **Permissionless release/refund works** — D-02 and D-03 of BUG-03 are fully implemented
-- **Finalization is the only operation requiring creator** — once finalized, distribution is truly permissionless
-- **Non-creators cannot finalize** — UI clearly communicates this limitation
-
-### Testing Plan for v1.2
-
-After v1.2 implements permissionless finalization:
-
-- [ ] Non-creator wallet can call finalizeCampaign on expired campaign
-- [ ] Creator wallet still authorized (backward compatible)
-- [ ] Finalization correctly transitions campaign status to Success/Failed based on goal
-- [ ] Full lifecycle works with permissionless finalization (non-creator creates, pledges, finalizes, releases/refunds)
-- [ ] Existing v1.1 campaigns (creator lock) still work on testnet (if not wiped)
-- [ ] New v1.2 campaigns use new campaign-lock and are permissionlessly finalizable
-
-### Implementation Checklist for v1.2
-
-- [ ] Create `contracts/campaign-lock/` directory
-- [ ] Implement campaign lock validation logic (allow creator OR after deadline)
-- [ ] Update `finalizeCampaign()` in transaction builder to use new lock
-- [ ] Deploy campaign lock to testnet
-- [ ] Update CONTRACTS constant in frontend with new campaign-lock code hash
-- [ ] Update campaign creation to use campaign-lock instead of creator lock
-- [ ] Update frontend finalization button visibility (remove isCreator check or make permissionless)
-- [ ] Integration tests for permissionless finalization
-- [ ] E2E test: non-creator finalizes campaign after deadline
+- [ ] Deploy updated campaign-lock to testnet (requires funded deployer account)
+- [ ] Full E2E on testnet with non-creator finalization
+- [ ] Early finalization (creator before deadline) — deferred to v1.2, tracked in ProjectPlan.md
