@@ -757,6 +757,7 @@ export default function CampaignDetailPage() {
   const canPledge = campaign.status === CampaignStatus.Active && !isExpired;
   const isCreator = walletLockHash !== null && campaign.creator.toLowerCase() === walletLockHash.toLowerCase();
   const needsFinalization = campaign.status === CampaignStatus.Active && isExpired;
+  const canFinalize = needsFinalization && campaign.status === CampaignStatus.Active;
   const effectiveStatus = campaign.effectiveStatus || (
     campaign.status === CampaignStatus.Active
       ? (isExpired
@@ -1095,7 +1096,7 @@ export default function CampaignDetailPage() {
           )}
 
           {/* Actions Section */}
-          {signer && (needsFinalization || (isCreator && campaign.status !== CampaignStatus.Active && pledges.length === 0)) && (
+          {signer && (canFinalize || (isCreator && campaign.status !== CampaignStatus.Active && pledges.length === 0)) && (
             <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
               <h2 className="text-lg font-semibold mb-4">Actions</h2>
 
@@ -1110,7 +1111,7 @@ export default function CampaignDetailPage() {
                 </div>
               )}
 
-              {needsFinalization && (
+              {canFinalize && (
                 <div className="mb-4">
                   <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                     This campaign has expired and needs to be finalized on-chain.
@@ -1118,19 +1119,13 @@ export default function CampaignDetailPage() {
                       ? " The funding goal was met — it will be marked as Successful. Funds will be automatically released to the creator."
                       : " The funding goal was not met — it will be marked as Failed. Funds will be automatically refunded to backers."}
                   </p>
-                  {isCreator ? (
-                    <button
-                      onClick={handleFinalize}
-                      disabled={actionLoading}
-                      className="w-full px-4 py-3 font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
-                    >
-                      {actionLoading ? "Finalizing..." : "Finalize Campaign"}
-                    </button>
-                  ) : (
-                    <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">
-                      Currently, only the campaign creator can finalize. Permissionless finalization is planned for v1.2.
-                    </p>
-                  )}
+                  <button
+                    onClick={handleFinalize}
+                    disabled={actionLoading}
+                    className="w-full px-4 py-3 font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
+                  >
+                    {actionLoading ? "Finalizing..." : "Finalize Campaign"}
+                  </button>
                 </div>
               )}
 
