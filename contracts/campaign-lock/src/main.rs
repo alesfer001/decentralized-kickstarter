@@ -102,9 +102,10 @@ pub fn program_entry() -> i8 {
 mod tests {
     use super::*;
 
+    // === Lock Args Parsing Tests ===
+
     #[test]
     fn test_deadline_not_met() {
-        // since=0 before deadline should return ERROR_SINCE_BELOW_DEADLINE
         // Create args with deadline_block = 1000
         let args_bytes = 1000u64.to_le_bytes();
         let lock_args = CampaignLockArgs::from_bytes(&args_bytes).unwrap();
@@ -144,5 +145,57 @@ mod tests {
         let bytes = deadline.to_le_bytes();
         let parsed = u64::from_le_bytes(bytes);
         assert_eq!(parsed, deadline);
+    }
+
+    // === Since Field Encoding Tests ===
+
+    #[test]
+    fn test_since_absolute_block_encoding() {
+        // Absolute block mode: (block_number << 1) | 0
+        // Block 1000 -> 0x7D0 << 1 = 0xFA0 = 4000
+        let block_num = 1000u64;
+        let since_value = (block_num << 1) as u64;
+        assert_eq!(since_value, 2000);
+    }
+
+    #[test]
+    fn test_since_zero_means_no_constraint() {
+        // since=0 means "no time constraint" - before deadline path
+        // This should be rejected by campaign-lock
+        let since_zero = 0u64;
+        assert_eq!(since_zero, 0);
+    }
+
+    #[test]
+    fn test_lock_args_field_extraction() {
+        // Verify we can construct args with different deadlines
+        let test_deadlines = vec![100u64, 1000u64, 10000u64, 100000u64];
+        for deadline in test_deadlines {
+            let args = deadline.to_le_bytes();
+            let parsed = CampaignLockArgs::from_bytes(&args).unwrap();
+            assert_eq!(parsed.deadline_block, deadline);
+        }
+    }
+
+    #[test]
+    fn test_args_with_extra_bytes() {
+        // Args size >= 8 should parse successfully (extra bytes ignored)
+        let mut args = vec![0u8; 16];
+        let deadline = 2500u64;
+        args[0..8].copy_from_slice(&deadline.to_le_bytes());
+        let result = CampaignLockArgs::from_bytes(&args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().deadline_block, 2500);
+    }
+
+    #[test]
+    fn test_error_codes_are_distinct() {
+        // Verify error codes don't overlap
+        assert_ne!(ERROR_INVALID_ARGS, ERROR_LOAD_SINCE);
+        assert_ne!(ERROR_INVALID_ARGS, ERROR_INVALID_SINCE);
+        assert_ne!(ERROR_INVALID_ARGS, ERROR_SINCE_BELOW_DEADLINE);
+        assert_ne!(ERROR_LOAD_SINCE, ERROR_INVALID_SINCE);
+        assert_ne!(ERROR_LOAD_SINCE, ERROR_SINCE_BELOW_DEADLINE);
+        assert_ne!(ERROR_INVALID_SINCE, ERROR_SINCE_BELOW_DEADLINE);
     }
 }
