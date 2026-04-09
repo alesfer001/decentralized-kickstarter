@@ -64,6 +64,13 @@ Plans:
 **Requirements:** BUG-01
 **UI hint:** yes
 **Canonical refs:** docs/IMPLEMENTATION-NOTES.md, docs/ProjectPlan.md §Phase 15.5
+**Plans:** 3 plans (or more)
+
+Plans:
+- [x] 05-01-PLAN.md — Campaign Lock Script Contract implementation (COMPLETED 2026-04-09)
+- [ ] 05-02-PLAN.md — Deploy campaign-lock to devnet and testnet
+- [ ] 05-03-PLAN.md — Integrate campaign-lock with transaction builder and frontend
+
 **Success criteria:**
 1. Custom campaign-lock script compiles and allows spending when current block >= campaign deadline AND type script validates Success/Failed transition
 2. Campaign-lock script rejects spending before deadline by non-creator transactions
