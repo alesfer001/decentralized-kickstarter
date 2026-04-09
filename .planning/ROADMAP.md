@@ -69,7 +69,7 @@ Plans:
 Plans:
 - [x] 05-01-PLAN.md — Campaign Lock Script Contract implementation (COMPLETED 2026-04-09)
 - [x] 05-02-PLAN.md — Deploy campaign-lock to devnet and testnet (COMPLETED 2026-04-10)
-- [ ] 05-03-PLAN.md — Integrate campaign-lock with transaction builder and frontend
+- [x] 05-03-PLAN.md — Integrate campaign-lock with transaction builder (COMPLETED 2026-04-10)
 - [x] 05-04-PLAN.md — Frontend permissionless finalization UI (COMPLETED 2026-04-10)
 
 **Success criteria:**

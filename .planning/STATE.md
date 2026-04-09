@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: Executing Phase 05
-stopped_at: Phase 05 Plan 04 completed (frontend permissionless finalization UI)
-last_updated: "2026-04-10T16:45:00.000Z"
+stopped_at: Phase 05 Plan 03 completed (transaction builder campaign-lock integration)
+last_updated: "2026-04-10T16:50:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 21
-  completed_plans: 19
+  completed_plans: 20
 ---
 
 # Project State
@@ -17,7 +17,7 @@ progress:
 ## Current Phase
 
 Phase: 05
-Current Plan: 04
+Current Plan: 03
 Next action: /gsd:execute-phase 05 (continue with plan 05-05)
 
 ## Project Reference
@@ -60,7 +60,13 @@ Core value: Backers' funds are automatically routed to the correct destination (
   - Deployment script ready for actual deployment
   - Placeholder code hash in config, ready to be filled on deployment
 
-- Plan 03: [Parallel execution - running concurrently with other tasks]
+- Plan 03: Transaction Builder Campaign-Lock Integration (COMPLETED 2026-04-10)
+  - 3 tasks completed: createCampaign() with campaign-lock, finalizeCampaign() with since field, encoding consistency
+  - 1 commit: f793fe2 (combined with 05-04)
+  - Campaign creation now uses campaign-lock contract with deadline args
+  - Finalization sets since field for deadline enforcement
+  - Deadline encoding is consistent via encodeDeadlineBlockAsLockArgs() helper
+  - TypeScript compilation successful
 
 - Plan 04: Frontend Permissionless Finalization UI (COMPLETED 2026-04-10)
   - 3 tasks completed: add campaign-lock constant, remove isCreator check, verify compilation
