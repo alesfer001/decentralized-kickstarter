@@ -37,6 +37,7 @@ const triggerKey = "0xd00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb975
 
 // Load deployment artifacts
 let campaignContract: ContractInfo;
+let campaignLockContract: ContractInfo;
 let pledgeContract: ContractInfo;
 let pledgeLockContract: ContractInfo;
 let receiptContract: ContractInfo;
@@ -45,6 +46,7 @@ try {
   const deploymentPath = path.resolve(__dirname, "../../deployment/deployed-contracts-devnet.json");
   const deployment = JSON.parse(fs.readFileSync(deploymentPath, "utf-8"));
   campaignContract = { ...deployment.campaign, hashType: "data2" as const };
+  campaignLockContract = { ...deployment.campaignLock, hashType: "data2" as const };
   pledgeContract = { ...deployment.pledge, hashType: "data2" as const };
   pledgeLockContract = { ...deployment.pledgeLock, hashType: "data2" as const };
   receiptContract = { ...deployment.receipt, hashType: "data2" as const };
@@ -110,7 +112,7 @@ async function testSuccessWithPermissionlessRelease() {
   console.log("\n=== SCENARIO 1: Success Lifecycle with Permissionless Release ===\n");
 
   const client = createCkbClient("devnet", rpcUrl);
-  const builder = new TransactionBuilder(client, campaignContract, pledgeContract, pledgeLockContract, receiptContract);
+  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
 
   const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
   const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
@@ -210,7 +212,7 @@ async function testFailureWithPermissionlessRefund() {
   console.log("\n=== SCENARIO 2: Failure Lifecycle with Permissionless Refund ===\n");
 
   const client = createCkbClient("devnet", rpcUrl);
-  const builder = new TransactionBuilder(client, campaignContract, pledgeContract, pledgeLockContract, receiptContract);
+  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
 
   const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
   const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
@@ -309,7 +311,7 @@ async function testMergeThenRelease() {
   console.log("\n=== SCENARIO 3: Merge Pledges Then Release ===\n");
 
   const client = createCkbClient("devnet", rpcUrl);
-  const builder = new TransactionBuilder(client, campaignContract, pledgeContract, pledgeLockContract, receiptContract);
+  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
 
   const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
   const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);

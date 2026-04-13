@@ -1011,7 +1011,7 @@ All scenarios tested via `claude --chrome` browser automation against local devn
 - [x] Update Render indexer env vars (5 vars: CAMPAIGN_CODE_HASH, PLEDGE_CODE_HASH, PLEDGE_LOCK_CODE_HASH, RECEIPT_CODE_HASH, CKB_RPC_URL)
 - [x] Redeploy Vercel frontend with updated env vars (10 vars: 4 code hashes + 4 tx hashes + API_URL + NETWORK)
 - [x] Testnet E2E testing with real JoyID wallets (2 accounts)
-- [ ] Run `test-v1.1-lifecycle.ts` against testnet (blocked by bugs below)
+- [x] Run `test-v1.1-lifecycle.ts` on devnet — all 3 scenarios pass (success release, failure refund, merge-then-release). Fixed missing `campaignLockContract` param added in Phase 5.
 - [ ] Update Nervos Talk thread with v1.1 progress
 - [ ] External tester validates full v1.1 lifecycle
 
