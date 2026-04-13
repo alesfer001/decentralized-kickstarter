@@ -120,17 +120,38 @@ export class CampaignIndexer {
           originalTxHash = await this.getOriginalTxHash(cell.outPoint.txHash);
         }
 
-        // Extract creator lock script from the cell's own lock (creator owns the campaign cell)
-        const lockScript = cell.cellOutput.lock;
+        // Extract creator lock script by finding an output whose lock hash matches creatorLockHash.
+        // For finalized campaigns, the creator's lock is only in the original creation tx
+        // (the finalization tx may be built by a non-creator), so use originalTxHash if available.
+        // For Active campaigns, check the current tx (creation tx).
+        let creatorLock: { codeHash: string; hashType: string; args: string } | null = null;
+        const lookupTxHash = originalTxHash || cell.outPoint.txHash;
+        try {
+          const txData = await this.client.getTransaction(lookupTxHash);
+          if (txData?.transaction) {
+            for (const output of txData.transaction.outputs) {
+              const script = ccc.Script.from(output.lock);
+              const lockHash = script.hash();
+              if (lockHash === data.creatorLockHash) {
+                creatorLock = {
+                  codeHash: script.codeHash,
+                  hashType: script.hashType,
+                  args: script.args,
+                };
+                break;
+              }
+            }
+          }
+        } catch {}
 
         dbCampaigns.push({
           id: outPointStr,
           tx_hash: cell.outPoint.txHash,
           output_index: Number(cell.outPoint.index),
           creator_lock_hash: data.creatorLockHash,
-          creator_lock_code_hash: lockScript?.codeHash || null,
-          creator_lock_hash_type: lockScript?.hashType || null,
-          creator_lock_args: lockScript?.args || null,
+          creator_lock_code_hash: creatorLock?.codeHash || null,
+          creator_lock_hash_type: creatorLock?.hashType || null,
+          creator_lock_args: creatorLock?.args || null,
           funding_goal: data.fundingGoal.toString(),
           deadline_block: data.deadlineBlock.toString(),
           total_pledged: data.totalPledged.toString(),

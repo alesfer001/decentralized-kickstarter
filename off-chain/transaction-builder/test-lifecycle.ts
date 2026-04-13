@@ -10,41 +10,47 @@ import { TransactionBuilder } from "./src";
 import type { ContractInfo } from "./src/types";
 import { CampaignStatus } from "./src/types";
 import { createCkbClient } from "./src/ckbClient";
+import * as fs from "fs";
+import * as path from "path";
 
-// Updated contract info from Phase 8 deployment
+// Load contract info from devnet deployment
+const deployedContracts = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, "../../deployment/deployed-contracts-devnet.json"), "utf-8")
+);
+
 const campaignContract: ContractInfo = {
-  codeHash: "0xb71c1c0bc80ddc5a16ef041f2adf1f9a9339b56ecd63c135607e7e5ebb6ea3fc",
+  codeHash: deployedContracts.campaign.codeHash,
   hashType: "data2",
-  txHash: "0x8d501828096d4b70a2f032ee04672cf5a75f8771dd1fb2ea23de0ef1519d05d6",
-  index: 0,
+  txHash: deployedContracts.campaign.txHash,
+  index: deployedContracts.campaign.index,
 };
 
 const campaignLockContract: ContractInfo = {
-  codeHash: "0x64397e46dda27be2864e60500fae131852c8e43ac5b1a30aa4c8bd72b4a52822",
+  codeHash: deployedContracts.campaignLock.codeHash,
   hashType: "data2",
-  txHash: "0x5c2ce449446ac9b6aee69619f60c98b8c1cc687f07461616a07206cedfbb28dc",
-  index: 0,
+  txHash: deployedContracts.campaignLock.txHash,
+  index: deployedContracts.campaignLock.index,
 };
 
 const pledgeContract: ContractInfo = {
-  codeHash: "0x423442d38b9e1fdfe68d0e878c4003317fe85408e202fd7de776205d289bc924",
+  codeHash: deployedContracts.pledge.codeHash,
   hashType: "data2",
-  txHash: "0x304be042daf897898dcf1851e12ecabaa0400f677f0135fe9ec6c727fdc1a9e2",
-  index: 0,
+  txHash: deployedContracts.pledge.txHash,
+  index: deployedContracts.pledge.index,
 };
 
 const pledgeLockContract: ContractInfo = {
-  codeHash: "0x3bb066cda4600d9709c195f28fb11eca22367d590a6139c5fc3791932df66066",
+  codeHash: deployedContracts.pledgeLock.codeHash,
   hashType: "data2",
-  txHash: "0xcd339452d46889074aa2cf607a73ee99fe9a659f5b421407066efd69db3df9b3",
-  index: 0,
+  txHash: deployedContracts.pledgeLock.txHash,
+  index: deployedContracts.pledgeLock.index,
 };
 
 const receiptContract: ContractInfo = {
-  codeHash: "0x67ca84f10c9bf7ecbed480ebedb0f6e380cc6c11825f2f77683b72ffbcaa352f",
+  codeHash: deployedContracts.receipt.codeHash,
   hashType: "data2",
-  txHash: "0x658bd0fcf22963ae9ff2cd1688541a061431f00d3943f14aaa43a96c1d929049",
-  index: 0,
+  txHash: deployedContracts.receipt.txHash,
+  index: deployedContracts.receipt.index,
 };
 
 const rpcUrl = "http://127.0.0.1:8114";
@@ -442,6 +448,112 @@ async function testNonCreatorPermissionlessFinalization() {
   return true;
 }
 
+/**
+ * Test 4: v1.1 Failure Lifecycle with Permissionless Refund
+ * Create campaign -> Pledge with receipt (v1.1) -> Finalize as Failed -> Permissionless refund
+ */
+async function testPermissionlessRefundLifecycle() {
+  console.log("\n=== TEST 4: v1.1 Permissionless Refund Lifecycle ===\n");
+
+  const client = createCkbClient("devnet", rpcUrl);
+  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
+
+  const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
+  const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
+
+  const creatorAddr = await creatorSigner.getRecommendedAddress();
+  const creatorLockHash = (await ccc.Address.fromString(creatorAddr, client)).script.hash();
+
+  const backerAddr = await backerSigner.getRecommendedAddress();
+  const backerLockHash = (await ccc.Address.fromString(backerAddr, client)).script.hash();
+  const backerLockScriptObj = (await ccc.Address.fromString(backerAddr, client)).script;
+
+  // Step 1: Create campaign with high goal (will fail)
+  const currentBlock = await getCurrentBlock(client);
+  const deadline = currentBlock + BigInt(10);
+  const fundingGoal = BigInt(10000 * 100000000); // 10000 CKB — unreachable
+
+  console.log(`1. Creating campaign (goal: 10000 CKB, deadline: block ${deadline})`);
+  const campaignTxHash = await builder.createCampaign(creatorSigner, {
+    creatorLockHash,
+    fundingGoal,
+    deadlineBlock: deadline,
+  });
+  console.log(`   Campaign TX: ${campaignTxHash}`);
+  await waitForTx(client, campaignTxHash);
+
+  // Step 2: Backer pledges with receipt (v1.1 pledge-lock)
+  const campaignTx = await client.getTransaction(campaignTxHash);
+  const campaignOutput = campaignTx!.transaction!.outputs[0];
+  const campaignTypeScriptHash = ccc.Script.from(campaignOutput.type!).hash();
+
+  console.log("\n2. Backer pledges 100 CKB via createPledgeWithReceipt (v1.1)");
+  const pledgeTxHash = await builder.createPledgeWithReceipt(backerSigner, {
+    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
+    campaignTypeScriptHash,
+    deadlineBlock: deadline,
+    backerLockHash,
+    amount: BigInt(100 * 100000000), // 100 CKB
+    campaignId: campaignTxHash,
+  });
+  console.log(`   Pledge TX: ${pledgeTxHash}`);
+  await waitForTx(client, pledgeTxHash);
+
+  // Step 3: Wait for deadline
+  console.log("\n3. Waiting for deadline to pass...");
+  let block = await getCurrentBlock(client);
+  while (block < deadline) {
+    console.log(`   Current block: ${block}, deadline: ${deadline}`);
+    await sleep(3000);
+    block = await getCurrentBlock(client);
+  }
+  console.log(`   Deadline passed! Current block: ${block}`);
+
+  // Step 4: Anyone finalizes as Failed
+  console.log("\n4. Non-creator finalizes campaign as Failed");
+  const finalizeTxHash = await builder.finalizeCampaign(backerSigner, {
+    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
+    campaignData: {
+      creatorLockHash,
+      fundingGoal,
+      deadlineBlock: deadline,
+      totalPledged: BigInt(0),
+    },
+    newStatus: CampaignStatus.Failed,
+  });
+  console.log(`   Finalize TX: ${finalizeTxHash}`);
+  await waitForTx(client, finalizeTxHash);
+
+  // Step 5: Permissionless refund — anyone triggers, pledge-lock routes funds to backer
+  console.log("\n5. Triggering permissionless refund (anyone can call)");
+
+  // Get pledge and receipt cell capacities
+  const pledgeTx = await client.getTransaction(pledgeTxHash);
+  const pledgeOutput = pledgeTx!.transaction!.outputs[0];
+  const pledgeCapacity = BigInt(pledgeOutput.capacity);
+  // Receipt is output[1] in createPledgeWithReceipt
+  const receiptOutput = pledgeTx!.transaction!.outputs[1];
+  const receiptCapacity = BigInt(receiptOutput.capacity);
+
+  const refundTxHash = await builder.permissionlessRefund(backerSigner, {
+    pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
+    pledgeCapacity,
+    receiptOutPoint: { txHash: pledgeTxHash, index: 1 },
+    receiptCapacity,
+    campaignCellDep: { txHash: finalizeTxHash, index: 0 },
+    backerLockScript: {
+      codeHash: backerLockScriptObj.codeHash,
+      hashType: backerLockScriptObj.hashType,
+      args: backerLockScriptObj.args,
+    },
+    deadlineBlock: deadline,
+  });
+  console.log(`   Refund TX: ${refundTxHash}`);
+  await waitForTx(client, refundTxHash);
+
+  console.log("\n   SUCCESS: v1.1 permissionless refund lifecycle completed!");
+}
+
 async function main() {
   console.log("=== CKB Kickstarter Lifecycle Integration Tests ===");
   console.log(`RPC: ${rpcUrl}`);
@@ -452,6 +564,7 @@ async function main() {
     await testSuccessLifecycle();
     await testFailureLifecycle();
     await testNonCreatorPermissionlessFinalization();
+    await testPermissionlessRefundLifecycle();
     console.log("\n\n=== ALL TESTS PASSED ===");
   } catch (error) {
     console.error("\n\nTEST FAILED:", error);

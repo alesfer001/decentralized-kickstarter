@@ -328,19 +328,21 @@ export default function CampaignDetailPage() {
       }
       const newCampaignData = "0x" + campaignHex;
 
-      const address = await signer.getRecommendedAddress();
       const client = signer.client;
-      const lockScript = (await ccc.Address.fromString(address, client)).script;
 
       const dataSize = campaignHex.length / 2;
       const capacity = BigInt(Math.ceil((8 + dataSize + 65 + 65) * 1.2)) * BigInt(100000000);
 
       const [txHash, indexStr] = campaign.campaignId.split("_");
 
-      // Fetch original campaign cell to preserve TypeID args
+      // Fetch original campaign cell to preserve TypeID args and lock script
       const campaignTx = await client.getTransaction(txHash);
       const originalOutput = campaignTx!.transaction!.outputs[parseInt(indexStr)];
       const typeIdArgs = originalOutput.type!.args;
+      const originalLock = originalOutput.lock;
+
+      // Use since field for campaign-lock deadline enforcement
+      const deadlineBlock = BigInt(campaign.deadlineBlock);
 
       const tx = ccc.Transaction.from({
         inputs: [
@@ -349,12 +351,13 @@ export default function CampaignDetailPage() {
               txHash: txHash,
               index: parseInt(indexStr),
             },
+            since: deadlineBlock,
           },
         ],
         outputs: [
           {
             capacity,
-            lock: lockScript,
+            lock: originalLock,
             type: {
               codeHash: CONTRACTS.campaign.codeHash,
               hashType: CONTRACTS.campaign.hashType,
@@ -368,6 +371,13 @@ export default function CampaignDetailPage() {
             outPoint: {
               txHash: CONTRACTS.campaign.txHash,
               index: CONTRACTS.campaign.index,
+            },
+            depType: "code",
+          },
+          {
+            outPoint: {
+              txHash: CONTRACTS.campaignLock.txHash,
+              index: CONTRACTS.campaignLock.index,
             },
             depType: "code",
           },

@@ -1228,6 +1228,17 @@ Bugs found (must fix before v1.1 is usable):
 - All 3 devnet E2E tests pass: success lifecycle, failure lifecycle, non-creator permissionless finalization
 - BUG-1 resolved — unblocks Phase 16 (auto-finalization bot)
 
+**2026-04-13:** E2E Integration Testing — Frontend + Indexer campaign-lock fixes
+- **Frontend campaign creation** (`campaigns/new/page.tsx`): now creates campaigns with campaign-lock (was using creator's secp256k1 lock, preventing non-creator finalization)
+- **Frontend finalization** (`campaigns/[id]/page.tsx`): preserves campaign-lock on output, sets `since = deadline`, adds campaign-lock cell dep (was replacing lock with user's secp256k1 and missing since field)
+- **Indexer creatorLockScript extraction** (`indexer.ts`): now resolves creator's lock from the original creation tx outputs (was reading the campaign cell's own lock, which is now campaign-lock instead of creator's secp256k1)
+- **Test lifecycle** (`test-lifecycle.ts`): loads contract hashes from `deployed-contracts-devnet.json` instead of hardcoding; added Test 4 (v1.1 permissionless refund lifecycle)
+- **Frontend `.env.local`**: added `NEXT_PUBLIC_CAMPAIGN_LOCK_CODE_HASH` and `NEXT_PUBLIC_CAMPAIGN_LOCK_TX_HASH`
+- **CLI E2E results (4/4 pass):** success lifecycle, failure lifecycle, non-creator permissionless finalization, v1.1 permissionless refund
+- **Browser E2E results (2/2 pass):**
+  - Success path: create(Account #0) → pledge 250 CKB(Account #1) → non-creator finalize(Account #1) → trigger release(Account #1) → "All pledges released to creator"
+  - Failure path: create(Account #0, 10K goal) → pledge 100 CKB(Account #1) → non-creator finalize(Account #1) → trigger refund(Account #1) → "No pledges" (funds returned to backer)
+
 ### Phase 16: Automatic Finalization Bot
 
 **Problem:** After the deadline passes, someone must manually click "Finalize Campaign" to transition the on-chain status. While this is permissionless (anyone can do it), it still requires a manual trigger. This creates friction — campaigns sit in "Expired - Needs Finalization" state until someone acts.

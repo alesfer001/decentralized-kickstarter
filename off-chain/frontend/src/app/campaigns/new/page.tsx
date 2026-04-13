@@ -124,13 +124,18 @@ export default function CreateCampaignPage() {
       const dataSize = campaignHex.length / 2;
       const capacity = BigInt(Math.ceil((8 + dataSize + 65 + 65) * 1.2)) * BigInt(100000000);
 
-      const lockScript = addressObj.script;
+      // Use campaign-lock script with deadline block as args (8 bytes LE)
+      const campaignLockArgs = "0x" + u64ToHexLE(deadlineBlock);
 
       const tx = ccc.Transaction.from({
         outputs: [
           {
             capacity,
-            lock: lockScript,
+            lock: {
+              codeHash: CONTRACTS.campaignLock.codeHash,
+              hashType: CONTRACTS.campaignLock.hashType,
+              args: campaignLockArgs,
+            },
             type: {
               codeHash: CONTRACTS.campaign.codeHash,
               hashType: CONTRACTS.campaign.hashType,
@@ -139,17 +144,19 @@ export default function CreateCampaignPage() {
           },
         ],
         outputsData: [campaignData],
-        cellDeps: CONTRACTS.campaign.txHash
-          ? [
-              {
-                outPoint: {
-                  txHash: CONTRACTS.campaign.txHash,
-                  index: CONTRACTS.campaign.index,
+        cellDeps: [
+          ...(CONTRACTS.campaign.txHash
+            ? [
+                {
+                  outPoint: {
+                    txHash: CONTRACTS.campaign.txHash,
+                    index: CONTRACTS.campaign.index,
+                  },
+                  depType: "code" as const,
                 },
-                depType: "code",
-              },
-            ]
-          : [],
+              ]
+            : []),
+        ],
       });
 
       await tx.completeInputsByCapacity(signer);
