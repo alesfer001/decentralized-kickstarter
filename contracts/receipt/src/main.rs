@@ -13,9 +13,10 @@ use ckb_std::{
     debug,
     high_level::{
         load_cell_data,
-        load_cell_lock,
         load_cell_lock_hash,
         load_cell_capacity,
+        load_cell_type_hash,
+        load_script,
     },
     ckb_constants::Source,
     error::SysError,
@@ -32,6 +33,10 @@ const ERROR_REFUND_OUTPUT_MISSING: i8 = 15;
 const ERROR_LOAD_LOCK: i8 = 16;
 const ERROR_LOAD_CAPACITY: i8 = 17;
 const ERROR_LOAD_LOCK_HASH: i8 = 18;
+const ERROR_LOAD_SCRIPT: i8 = 19;
+const ERROR_INVALID_ARGS: i8 = 20;
+const ERROR_AMOUNT_MISMATCH: i8 = 21;
+const ERROR_BACKER_MISMATCH: i8 = 22;
 
 /// Maximum fee deducted during refund (1 CKB = 100M shannons)
 const MAX_FEE: u64 = 100_000_000;
@@ -69,9 +74,23 @@ impl ReceiptData {
     }
 }
 
-/// D-11: Receipt must be created in same transaction as a valid pledge cell
-/// with matching backer_lock_hash in its lock args.
+/// D-04: Receipt must be created in same transaction as a valid pledge cell
+/// with matching pledge_amount and backer_lock_hash.
+/// Receipt type script args contain pledge_type_script_hash (first 32 bytes).
 fn validate_receipt_creation() -> i8 {
+    // Load receipt type script to get pledge_type_hash from args
+    let script = match load_script() {
+        Ok(s) => s,
+        Err(_) => return ERROR_LOAD_SCRIPT,
+    };
+    let args = script.args().raw_data();
+    if args.len() < 32 {
+        debug!("Receipt args too short — need pledge_type_hash");
+        return ERROR_INVALID_ARGS;
+    }
+    let mut pledge_type_hash = [0u8; 32];
+    pledge_type_hash.copy_from_slice(&args[0..32]);
+
     let receipt_data = match load_cell_data(0, Source::GroupOutput) {
         Ok(d) => d,
         Err(_) => return ERROR_LOAD_DATA,
@@ -93,26 +112,46 @@ fn validate_receipt_creation() -> i8 {
         return ERROR_ZERO_BACKER_HASH;
     }
 
-    // Search all transaction outputs for a pledge cell whose lock args contain
-    // a matching backer_lock_hash at offset [40..72] (pledge lock args layout).
+    // Find the pledge cell in outputs by type script hash
     let mut found_matching_pledge = false;
     for i in 0.. {
-        match load_cell_lock(i, Source::Output) {
-            Ok(lock_script) => {
-                let lock_args = lock_script.args().raw_data();
-                // Check if this is a pledge lock (args length >= 72)
-                // and backer_lock_hash at [40..72] matches
-                if lock_args.len() >= PLEDGE_LOCK_ARGS_SIZE {
-                    let mut backer_hash_in_lock = [0u8; 32];
-                    backer_hash_in_lock.copy_from_slice(&lock_args[40..72]);
-                    if backer_hash_in_lock == receipt.backer_lock_hash {
-                        found_matching_pledge = true;
-                        break;
+        match load_cell_type_hash(i, Source::Output) {
+            Ok(Some(hash)) => {
+                if hash == pledge_type_hash {
+                    // Found a pledge cell — read its data
+                    let pledge_data = match load_cell_data(i, Source::Output) {
+                        Ok(d) => d,
+                        Err(_) => return ERROR_LOAD_DATA,
+                    };
+                    if pledge_data.len() < 72 {
+                        continue; // Not a valid pledge cell
                     }
+                    // Parse pledge data: campaign_id [0..32], backer_lock_hash [32..64], amount [64..72]
+                    let pledge_amount = u64::from_le_bytes(
+                        pledge_data[64..72].try_into().unwrap()
+                    );
+                    let mut pledge_backer_hash = [0u8; 32];
+                    pledge_backer_hash.copy_from_slice(&pledge_data[32..64]);
+
+                    // Cross-check: receipt amount must match pledge amount
+                    if pledge_amount != receipt.pledge_amount {
+                        debug!("Receipt amount {} != pledge amount {}",
+                               receipt.pledge_amount, pledge_amount);
+                        return ERROR_AMOUNT_MISMATCH;
+                    }
+                    // Cross-check: receipt backer must match pledge backer
+                    if pledge_backer_hash != receipt.backer_lock_hash {
+                        debug!("Receipt backer hash != pledge backer hash");
+                        return ERROR_BACKER_MISMATCH;
+                    }
+
+                    found_matching_pledge = true;
+                    break;
                 }
             }
+            Ok(None) => continue,
             Err(SysError::IndexOutOfBound) => break,
-            Err(_) => return ERROR_LOAD_LOCK,
+            Err(_) => return ERROR_LOAD_DATA,
         }
     }
 
