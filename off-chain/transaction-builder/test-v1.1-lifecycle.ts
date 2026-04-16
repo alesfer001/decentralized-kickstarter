@@ -278,17 +278,14 @@ async function testFailureWithPermissionlessRefund() {
   console.log(`   Finalize TX: ${finalizeTxHash}`);
   await waitForTx(client, finalizeTxHash);
 
-  // Step 5: Backer triggers permissionless refund
+  // Step 5: Backer triggers permissionless refund (receipt-free since v1.1 hardening)
   console.log("\n5. Backer triggers permissionless refund");
   const pledgeTxInfo = await client.getTransaction(pledgeTxHash);
   const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[0].capacity);
-  const receiptCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[1].capacity);
 
   const refundTxHash = await builder.permissionlessRefund(backerSigner, {
     pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
     pledgeCapacity,
-    receiptOutPoint: { txHash: pledgeTxHash, index: 1 },
-    receiptCapacity,
     campaignCellDep: { txHash: finalizeTxHash, index: 0 },
     backerLockScript: {
       codeHash: backerLockScript.codeHash,
