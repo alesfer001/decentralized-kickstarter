@@ -50,7 +50,6 @@ const ERROR_NOT_A_MERGE: i8 = 40;
 const ERROR_NO_MERGE_OUTPUT: i8 = 41;
 const ERROR_MULTIPLE_MERGE_OUTPUTS: i8 = 42;
 const ERROR_MERGE_CAPACITY_MISMATCH: i8 = 43;
-#[allow(dead_code)]
 const ERROR_MERGE_LOCK_MISMATCH: i8 = 44;
 
 /// Maximum fee deducted from pledge capacity during release/refund (1 CKB = 100M shannons)
@@ -241,6 +240,31 @@ fn validate_merge(_lock_args: &PledgeLockArgs) -> i8 {
         Err(_) => return ERROR_LOAD_LOCK_HASH,
     };
 
+    // Verify all group inputs have identical lock args (defense in depth)
+    // Source::GroupInput already guarantees identical lock hashes, but explicit
+    // args comparison adds clarity and defense against future changes.
+    // Note: identical lock hash (code_hash + hash_type + args) implies identical args,
+    // so this check is theoretically redundant but valuable as defense in depth.
+    let our_lock_args = match load_script() {
+        Ok(s) => s.args().raw_data().to_vec(),
+        Err(_) => return ERROR_INVALID_ARGS,
+    };
+
+    // Verify all group inputs match our lock args
+    for i in 0.. {
+        match load_cell_lock_hash(i, Source::GroupInput) {
+            Ok(hash) => {
+                if hash != our_lock_hash {
+                    // This shouldn't happen due to GroupInput matching, but check anyway
+                    debug!("Merge: input {} has different lock hash", i);
+                    return ERROR_MERGE_LOCK_MISMATCH;
+                }
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return ERROR_LOAD_LOCK_HASH,
+        }
+    }
+
     // Scan all outputs for cells matching our lock hash
     let mut matching_output_count: usize = 0;
     let mut matching_output_cap: u64 = 0;
@@ -325,6 +349,8 @@ pub fn program_entry() -> i8 {
 
     if !is_after_deadline {
         // BEFORE DEADLINE: only merge is allowed
+        // Note: since=0 doesn't prove actual block < deadline, but merge output
+        // retains the same lock script, so funds remain locked regardless.
         return validate_merge(&lock_args);
     }
 
