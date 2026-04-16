@@ -10,16 +10,12 @@ ckb_std::entry!(program_entry);
 ckb_std::default_alloc!(16384, 1258306, 64);
 
 use ckb_std::{
-    debug,
-    high_level::{
-        load_cell_data,
-        load_cell_lock_hash,
-        load_cell_capacity,
-        load_cell_type_hash,
-        load_script,
-    },
     ckb_constants::Source,
+    debug,
     error::SysError,
+    high_level::{
+        load_cell_capacity, load_cell_data, load_cell_lock_hash, load_cell_type_hash, load_script,
+    },
 };
 
 // === Error Codes ===
@@ -62,7 +58,10 @@ impl ReceiptData {
         let pledge_amount = u64::from_le_bytes(data[0..8].try_into().unwrap());
         let mut backer_lock_hash = [0u8; 32];
         backer_lock_hash.copy_from_slice(&data[8..40]);
-        Ok(ReceiptData { pledge_amount, backer_lock_hash })
+        Ok(ReceiptData {
+            pledge_amount,
+            backer_lock_hash,
+        })
     }
 
     #[allow(dead_code)]
@@ -127,16 +126,16 @@ fn validate_receipt_creation() -> i8 {
                         continue; // Not a valid pledge cell
                     }
                     // Parse pledge data: campaign_id [0..32], backer_lock_hash [32..64], amount [64..72]
-                    let pledge_amount = u64::from_le_bytes(
-                        pledge_data[64..72].try_into().unwrap()
-                    );
+                    let pledge_amount = u64::from_le_bytes(pledge_data[64..72].try_into().unwrap());
                     let mut pledge_backer_hash = [0u8; 32];
                     pledge_backer_hash.copy_from_slice(&pledge_data[32..64]);
 
                     // Cross-check: receipt amount must match pledge amount
                     if pledge_amount != receipt.pledge_amount {
-                        debug!("Receipt amount {} != pledge amount {}",
-                               receipt.pledge_amount, pledge_amount);
+                        debug!(
+                            "Receipt amount {} != pledge amount {}",
+                            receipt.pledge_amount, pledge_amount
+                        );
                         return ERROR_AMOUNT_MISMATCH;
                     }
                     // Cross-check: receipt backer must match pledge backer
@@ -178,9 +177,7 @@ fn validate_receipt_destruction() -> i8 {
 
     // Verify that an output exists going to backer_lock_hash
     // with capacity >= pledge_amount - MAX_FEE
-    let min_refund = receipt.pledge_amount
-        .checked_sub(MAX_FEE)
-        .unwrap_or(0);
+    let min_refund = receipt.pledge_amount.checked_sub(MAX_FEE).unwrap_or(0);
 
     let mut refund_found = false;
     for i in 0.. {
