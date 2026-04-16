@@ -17,7 +17,7 @@ ckb_std::default_alloc!(16384, 1258306, 64);
 
 use ckb_std::{
     debug,
-    high_level::{load_script, load_cell_data},
+    high_level::{load_script, load_cell_data, load_cell_type_hash},
     ckb_constants::Source,
     error::SysError,
 };
@@ -31,6 +31,8 @@ const ERROR_MERGE_AMOUNT_MISMATCH: i8 = 12;
 const ERROR_OVERFLOW: i8 = 13;
 const ERROR_CAMPAIGN_MISMATCH: i8 = 14;
 const ERROR_PARTIAL_REFUND_INVALID: i8 = 15;
+const ERROR_REFUND_AMOUNT_MISMATCH: i8 = 16;
+const ERROR_NO_RECEIPT_IN_INPUTS: i8 = 17;
 
 /// Pledge data structure (stored in cell data)
 /// Layout (total: 72 bytes):
@@ -177,8 +179,8 @@ fn validate_merge_pledge() -> i8 {
 
 /// D-14: Partial refund from merged cell.
 /// 1 input -> 1 reduced output (capacity difference matches receipt being destroyed).
-/// The receipt type script validates its own destruction separately.
-fn validate_partial_refund() -> i8 {
+/// Cross-checks that the amount difference equals the destroyed receipt's pledge_amount.
+fn validate_partial_refund(receipt_type_hash: Option<&[u8; 32]>) -> i8 {
     let input_data = match load_cell_data(0, Source::GroupInput) {
         Ok(d) => d,
         Err(_) => return ERROR_LOAD_DATA,
@@ -209,9 +211,56 @@ fn validate_partial_refund() -> i8 {
         return ERROR_PARTIAL_REFUND_INVALID;
     }
 
-    // The difference (input_amount - output_amount) should equal the receipt
-    // being destroyed in this transaction. The receipt type script validates
-    // its own destruction, so we don't need to cross-check here.
+    let amount_difference = match input_pledge.amount.checked_sub(output_pledge.amount) {
+        Some(diff) => diff,
+        None => {
+            debug!("Partial refund: amount difference underflow");
+            return ERROR_OVERFLOW;
+        }
+    };
+
+    // Cross-check with destroyed receipt
+    if let Some(receipt_hash) = receipt_type_hash {
+        let mut found_receipt = false;
+        for i in 0.. {
+            match load_cell_type_hash(i, Source::Input) {
+                Ok(Some(hash)) => {
+                    if hash == *receipt_hash {
+                        // Found destroyed receipt — read its data
+                        let receipt_data = match load_cell_data(i, Source::Input) {
+                            Ok(d) => d,
+                            Err(_) => return ERROR_LOAD_DATA,
+                        };
+                        if receipt_data.len() < 8 {
+                            continue;
+                        }
+                        let receipt_amount = u64::from_le_bytes(
+                            receipt_data[0..8].try_into().unwrap()
+                        );
+
+                        // Amount difference must equal receipt amount
+                        if amount_difference != receipt_amount {
+                            debug!("Partial refund: diff {} != receipt {}",
+                                   amount_difference, receipt_amount);
+                            return ERROR_REFUND_AMOUNT_MISMATCH;
+                        }
+                        found_receipt = true;
+                        break;
+                    }
+                }
+                Ok(None) => continue,
+                Err(SysError::IndexOutOfBound) => break,
+                Err(_) => return ERROR_LOAD_DATA,
+            }
+        }
+
+        if !found_receipt {
+            debug!("Partial refund: no receipt found in inputs");
+            return ERROR_NO_RECEIPT_IN_INPUTS;
+        }
+    }
+    // If no receipt_type_hash in args (legacy), skip cross-check
+    // This provides backward compatibility for the transition period
 
     0
 }
@@ -228,8 +277,17 @@ pub fn program_entry() -> i8 {
         }
     };
 
-    let _args = script.args().raw_data();
-    debug!("Script args length: {}", _args.len());
+    let args = script.args().raw_data();
+    debug!("Script args length: {}", args.len());
+
+    // Parse receipt type script hash from args (first 32 bytes)
+    let receipt_type_hash: Option<[u8; 32]> = if args.len() >= 32 {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&args[0..32]);
+        Some(hash)
+    } else {
+        None
+    };
 
     // Detect scenario by checking GroupInput and GroupOutput
     let has_input = match load_cell_data(0, Source::GroupInput) {
@@ -282,7 +340,7 @@ pub fn program_entry() -> i8 {
             } else if input_count == 1 && output_count == 1 {
                 // PARTIAL REFUND from merged cell (D-14 / MERGE-02)
                 debug!("Pledge partial refund: 1 input -> 1 reduced output");
-                validate_partial_refund()
+                validate_partial_refund(receipt_type_hash.as_ref())
             } else {
                 debug!("Invalid pledge modification pattern: {} inputs -> {} outputs", input_count, output_count);
                 ERROR_MODIFICATION_NOT_ALLOWED
