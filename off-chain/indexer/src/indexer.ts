@@ -4,6 +4,122 @@ import { parseCampaignData, parsePledgeData, parseReceiptData } from "./parser";
 import { Database, DBCampaign, DBPledge, DBReceipt } from "./database";
 
 /**
+ * Create a network-aware CKB client
+ * Matches the transaction-builder's createCkbClient pattern
+ */
+function createCkbClient(rpcUrl: string): ccc.Client {
+  const network = (process.env.CKB_NETWORK || "devnet").toLowerCase();
+
+  // For devnet, use ClientPublicTestnet with OffCKB script overrides
+  if (network === "devnet") {
+    const OFFCKB_DEVNET_SCRIPTS: Record<ccc.KnownScript, ccc.ScriptInfoLike | undefined> = {
+      [ccc.KnownScript.Secp256k1Blake160]: {
+        codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        hashType: "type",
+        cellDeps: [
+          {
+            cellDep: {
+              outPoint: {
+                txHash: "0x75be96e1871693f030db27ddae47890a28ab180e88e36ebb3575d9f1377d3da7",
+                index: 0,
+              },
+              depType: "depGroup",
+            },
+          },
+        ],
+      },
+      [ccc.KnownScript.Secp256k1Multisig]: {
+        codeHash: "0x5c5069eb0857efc65e1bca0c07df34c31663b3622fd3876c876320fc9634e2a8",
+        hashType: "type",
+        cellDeps: [
+          {
+            cellDep: {
+              outPoint: {
+                txHash: "0x75be96e1871693f030db27ddae47890a28ab180e88e36ebb3575d9f1377d3da7",
+                index: 1,
+              },
+              depType: "depGroup",
+            },
+          },
+        ],
+      },
+      [ccc.KnownScript.TypeId]: {
+        codeHash: "0x00000000000000000000000000000000000000000000000000545950455f4944",
+        hashType: "type",
+        cellDeps: [],
+      },
+      [ccc.KnownScript.AnyoneCanPay]: {
+        codeHash: "0xe09352af0066f3162287763ce4ddba9af6bfaeab198dc7ab37f8c71c9e68bb5b",
+        hashType: "type",
+        cellDeps: [
+          {
+            cellDep: {
+              outPoint: {
+                txHash: "0x1dbed8dcfe0f18359c65c5e9546fd15cd69de73ea0a502345be30180649c9467",
+                index: 8,
+              },
+              depType: "code",
+            },
+          },
+          {
+            cellDep: {
+              outPoint: {
+                txHash: "0x1dbed8dcfe0f18359c65c5e9546fd15cd69de73ea0a502345be30180649c9467",
+                index: 3,
+              },
+              depType: "code",
+            },
+          },
+        ],
+      },
+      [ccc.KnownScript.NervosDao]: {
+        codeHash: "0x82d76d1b75fe2fd9a27dfbaa65a039221a380d76c926f378d3f81cf3e7e13f2e",
+        hashType: "type",
+        cellDeps: [
+          {
+            cellDep: {
+              outPoint: {
+                txHash: "0x1dbed8dcfe0f18359c65c5e9546fd15cd69de73ea0a502345be30180649c9467",
+                index: 2,
+              },
+              depType: "code",
+            },
+          },
+        ],
+      },
+      [ccc.KnownScript.Secp256k1MultisigV2]: undefined,
+      [ccc.KnownScript.XUdt]: undefined,
+      [ccc.KnownScript.JoyId]: undefined,
+      [ccc.KnownScript.COTA]: undefined,
+      [ccc.KnownScript.PWLock]: undefined,
+      [ccc.KnownScript.OmniLock]: undefined,
+      [ccc.KnownScript.NostrLock]: undefined,
+      [ccc.KnownScript.UniqueType]: undefined,
+      [ccc.KnownScript.AlwaysSuccess]: undefined,
+      [ccc.KnownScript.InputTypeProxyLock]: undefined,
+      [ccc.KnownScript.OutputTypeProxyLock]: undefined,
+      [ccc.KnownScript.LockProxyLock]: undefined,
+      [ccc.KnownScript.SingleUseLock]: undefined,
+      [ccc.KnownScript.TypeBurnLock]: undefined,
+      [ccc.KnownScript.EasyToDiscoverType]: undefined,
+      [ccc.KnownScript.TimeLock]: undefined,
+    };
+    return new ccc.ClientPublicTestnet({
+      url: rpcUrl,
+      scripts: OFFCKB_DEVNET_SCRIPTS,
+      fallbacks: [],
+    });
+  } else if (network === "testnet") {
+    return new ccc.ClientPublicTestnet({ url: rpcUrl });
+  } else if (network === "mainnet") {
+    return new ccc.ClientPublicMainnet({ url: rpcUrl });
+  } else {
+    // Default to testnet for unknown networks
+    return new ccc.ClientPublicTestnet({ url: rpcUrl });
+  }
+}
+
+/**
  * Indexer for Campaign and Pledge cells
  * Uses SQLite for persistence and background polling for updates.
  */
@@ -18,7 +134,7 @@ export class CampaignIndexer {
   private pledgeLockCodeHash: string = "";
 
   constructor(rpcUrl: string, db: Database) {
-    this.client = new ccc.ClientPublicTestnet({ url: rpcUrl });
+    this.client = createCkbClient(rpcUrl);
     this.rpcUrl = rpcUrl;
     this.db = db;
   }
