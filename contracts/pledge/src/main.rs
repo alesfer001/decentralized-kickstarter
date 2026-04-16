@@ -17,7 +17,7 @@ ckb_std::default_alloc!(16384, 1258306, 64);
 
 use ckb_std::{
     debug,
-    high_level::{load_script, load_cell_data, load_cell_type_hash},
+    high_level::{load_script, load_cell_data, load_cell_type},
     ckb_constants::Source,
     error::SysError,
 };
@@ -219,13 +219,14 @@ fn validate_partial_refund(receipt_type_hash: Option<&[u8; 32]>) -> i8 {
         }
     };
 
-    // Cross-check with destroyed receipt
-    if let Some(receipt_hash) = receipt_type_hash {
+    // Cross-check with destroyed receipt (by code_hash, not full type script hash)
+    if let Some(receipt_code_hash) = receipt_type_hash {
         let mut found_receipt = false;
         for i in 0.. {
-            match load_cell_type_hash(i, Source::Input) {
-                Ok(Some(hash)) => {
-                    if hash == *receipt_hash {
+            match load_cell_type(i, Source::Input) {
+                Ok(Some(type_script)) => {
+                    let code_hash = type_script.code_hash().raw_data();
+                    if code_hash.as_ref() == receipt_code_hash {
                         // Found destroyed receipt — read its data
                         let receipt_data = match load_cell_data(i, Source::Input) {
                             Ok(d) => d,

@@ -14,7 +14,7 @@ use ckb_std::{
     debug,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_lock_hash, load_cell_type_hash, load_script,
+        load_cell_capacity, load_cell_data, load_cell_lock_hash, load_cell_type, load_script,
     },
 };
 
@@ -75,20 +75,22 @@ impl ReceiptData {
 
 /// D-04: Receipt must be created in same transaction as a valid pledge cell
 /// with matching pledge_amount and backer_lock_hash.
-/// Receipt type script args contain pledge_type_script_hash (first 32 bytes).
+/// Receipt type script args contain the pledge contract CODE HASH (first 32 bytes).
+/// We compare by code_hash (not full type script hash) to avoid circular dependency
+/// between pledge and receipt args.
 fn validate_receipt_creation() -> i8 {
-    // Load receipt type script to get pledge_type_hash from args
+    // Load receipt type script to get pledge code hash from args
     let script = match load_script() {
         Ok(s) => s,
         Err(_) => return ERROR_LOAD_SCRIPT,
     };
     let args = script.args().raw_data();
     if args.len() < 32 {
-        debug!("Receipt args too short — need pledge_type_hash");
+        debug!("Receipt args too short — need pledge code hash");
         return ERROR_INVALID_ARGS;
     }
-    let mut pledge_type_hash = [0u8; 32];
-    pledge_type_hash.copy_from_slice(&args[0..32]);
+    let mut pledge_code_hash = [0u8; 32];
+    pledge_code_hash.copy_from_slice(&args[0..32]);
 
     let receipt_data = match load_cell_data(0, Source::GroupOutput) {
         Ok(d) => d,
@@ -111,12 +113,14 @@ fn validate_receipt_creation() -> i8 {
         return ERROR_ZERO_BACKER_HASH;
     }
 
-    // Find the pledge cell in outputs by type script hash
+    // Find the pledge cell in outputs by type script code_hash
+    // Uses load_cell_type to get the full Script, then compares code_hash field
     let mut found_matching_pledge = false;
     for i in 0.. {
-        match load_cell_type_hash(i, Source::Output) {
-            Ok(Some(hash)) => {
-                if hash == pledge_type_hash {
+        match load_cell_type(i, Source::Output) {
+            Ok(Some(type_script)) => {
+                let code_hash = type_script.code_hash().raw_data();
+                if code_hash.as_ref() == &pledge_code_hash {
                     // Found a pledge cell — read its data
                     let pledge_data = match load_cell_data(i, Source::Output) {
                         Ok(d) => d,
