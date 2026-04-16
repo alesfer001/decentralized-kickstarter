@@ -2,23 +2,25 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
-status: Executing Phase 05
-stopped_at: Phase 05 Plan 03 completed (transaction builder campaign-lock integration)
-last_updated: "2026-04-10T16:50:00.000Z"
+current_plan: 1
+status: Executing Phase 06
+stopped_at: Phase 06 planning completed
+last_updated: "2026-04-16T11:31:46.437Z"
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 3
-  total_plans: 21
-  completed_plans: 20
+  total_plans: 27
+  completed_plans: 19
+  percent: 70
 ---
 
 # Project State
 
 ## Current Phase
 
-Phase: 05
-Current Plan: 03
-Next action: /gsd:execute-phase 05 (continue with plan 05-05)
+Phase: 06
+Current Plan: 1
+Next action: /gsd:execute-phase 06
 
 ## Project Reference
 
@@ -28,15 +30,15 @@ Core value: Backers' funds are automatically routed to the correct destination (
 ## Phase History
 
 - Phases 1-3: v1.1 implementation completed (contracts, off-chain, frontend + E2E)
-- Phase 4: Started 2026-04-06
+- Phase 4: v1.1 bug fixes (5 bugs from testnet E2E testing)
+- Phase 5: Permissionless finalization (campaign lock script) — completed 2026-04-13
 
 ## Last Session
 
-- **Stopped at:** Phase 05-01 COMPLETED
-- **Completed:** 05-01-SUMMARY.md created (Campaign Lock Script Contract)
-- **Session date:** 2026-04-09T11:10:45Z
-- **Tasks:** 3/3 completed
-- **Commits:** 3 (scaffold, implementation, tests)
+- **Stopped at:** Phase 06 planning completed
+- **Completed:** CONTEXT.md, RESEARCH.md, 6 plan files, ROADMAP.md updated
+- **Session date:** 2026-04-16
+- **Tasks:** Planning only — no code changes
 
 ## Completed Plans in Phase 4
 
@@ -49,32 +51,19 @@ Core value: Backers' funds are automatically routed to the correct destination (
 ## Completed Plans in Phase 5
 
 - Plan 01: Campaign Lock Script Contract (COMPLETED 2026-04-09)
-  - 3 tasks completed: scaffold, implementation, tests
-  - 3 commits: 7963b58, a39414f, c878ee8
-  - Contract ready for deployment and integration
-
 - Plan 02: Campaign-Lock Deployment and Integration (COMPLETED 2026-04-10)
-  - 2 tasks completed: deployment config updates, transaction builder updates
-  - 4 commits: 618be07, ca55f1a, d8197fd, 00822ec
-  - Campaign-lock integrated into TransactionBuilder
-  - Deployment script ready for actual deployment
-  - Placeholder code hash in config, ready to be filled on deployment
-
 - Plan 03: Transaction Builder Campaign-Lock Integration (COMPLETED 2026-04-10)
-  - 3 tasks completed: createCampaign() with campaign-lock, finalizeCampaign() with since field, encoding consistency
-  - 1 commit: f793fe2 (combined with 05-04)
-  - Campaign creation now uses campaign-lock contract with deadline args
-  - Finalization sets since field for deadline enforcement
-  - Deadline encoding is consistent via encodeDeadlineBlockAsLockArgs() helper
-  - TypeScript compilation successful
-
 - Plan 04: Frontend Permissionless Finalization UI (COMPLETED 2026-04-10)
-  - 3 tasks completed: add campaign-lock constant, remove isCreator check, verify compilation
-  - 3 commits: 3aa039a, 5342d5c, f793fe2
-  - Campaign finalize button now visible to all users when campaign expired
-  - isCreator check removed from finalization logic
-  - Frontend builds without TypeScript errors
-  - Ready for devnet E2E testing
+- Plan 05: Devnet E2E Testing — Non-creator Finalization (COMPLETED 2026-04-13)
+
+## Phase 6 Plan
+
+- Plan 01: Pledge-lock hardening — fail-safe backdoor + merge guards (Wave 1)
+- Plan 02: Campaign type hardening — destruction protection + since + metadata (Wave 1)
+- Plan 03: Receipt hardening + permissionless refund (Wave 1)
+- Plan 04: Pledge type partial refund cross-check (Wave 1)
+- Plan 05: Off-chain updates — indexer, builder, deploy script (Wave 2)
+- Plan 06: Build, deploy, E2E validation (Wave 3)
 
 ## Decisions Made
 
@@ -86,3 +75,13 @@ Core value: Backers' funds are automatically routed to the correct destination (
 - **D-14 implemented:** Finalize button shown to all users (not just creator) when campaign expired
 - **D-15 implemented:** Campaign-lock contract code hash added to frontend constants
 - **Auto-selected:** Option A (Defer to v1.2) for BUG-01 checkpoint decision
+
+### Phase 6 Decisions (planned)
+
+- **D-P6-01:** Remove fail-safe None branch, replace with grace period (1,944,000 blocks ≈ 180 days)
+- **D-P6-02:** Campaign destruction: Failed → allowed, Success → blocked until grace period
+- **D-P6-03:** Receipt creation hardened with pledge cross-check (type hash + amount + backer)
+- **D-P6-04:** Refund drops receipt from inputs — fully permissionless via pledge-lock alone
+- **D-P6-05:** Partial refund cross-checks amount difference with destroyed receipt
+- **D-P6-06:** Campaign finalization enforces since >= deadline_block (defense in depth)
+- **D-P6-07:** Reserved bytes and metadata checked during finalization

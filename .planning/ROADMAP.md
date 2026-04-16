@@ -1,7 +1,7 @@
 # Roadmap: CKB Kickstarter v1.1
 
 ## Overview
-5 phases | 21 requirements | Coarse granularity
+6 phases | 27 requirements | Coarse granularity
 
 Core value: Backers' funds are automatically routed to the correct destination (creator on success, backer on failure) without anyone's cooperation — enforced entirely by on-chain scripts.
 
@@ -80,9 +80,34 @@ Plans:
 5. Full lifecycle on testnet: create → pledge → (anyone) finalize → permissionless release/refund
 6. Frontend removes creator-only finalization restriction and shows "Finalize" to all users on expired campaigns
 
+## Phase 6: Security Hardening — Officeyutong Review Fixes
+**Goal:** Address all 6 issues from CKB core developer Officeyutong's code review. Two HIGH-severity mainnet blockers + four MEDIUM/SMALL hardening items. All contract changes bundled into one deployment cycle.
+**Requirements:** SEC-01, SEC-02, SEC-03, SEC-04, SEC-05, SEC-06
+**UI hint:** no
+**Canonical refs:** docs/ProjectPlan.md §Phase 16, memory/reference_officeyutong_review.md
+**Plans:** 6 plans in 3 waves
+
+Plans:
+- [x] 06-01-PLAN.md — Pledge-lock hardening: remove fail-safe backdoor (grace period), merge deadline guard, lock args validation (Issues 1 + 4)
+- [x] 06-02-PLAN.md — Campaign type hardening: restrict Success destruction, enforce since >= deadline on finalization, reserved bytes + metadata check (Issues 1b + 5 + 6b)
+- [x] 06-03-PLAN.md — Receipt hardening + permissionless refund: cross-check pledge data on receipt creation, drop receipt from refund inputs (Issue 2)
+- [x] 06-04-PLAN.md — Pledge type partial refund cross-check: verify amount difference == receipt pledge_amount (Issue 3)
+- [ ] 06-05-PLAN.md — Off-chain updates: indexer network-aware client, builder contract args, deploy script (Issue 6a + integration)
+- [ ] 06-06-PLAN.md — Build, deploy to devnet, happy path + attack scenario E2E tests
+
+**Success criteria:**
+1. Fail-safe backdoor closed — refund without campaign cell_dep rejected within grace period (1,944,000 blocks ≈ 180 days)
+2. Receipt creation cross-checks pledge amount and backer_lock_hash from sibling pledge cell
+3. permissionlessRefund works without backer signature (receipt not required as input)
+4. Partial refund amount difference matches destroyed receipt's pledge_amount
+5. Campaign finalization enforces since >= deadline_block (defense in depth)
+6. Success campaign destruction blocked within grace period
+7. Merge path documents timing limitation, validates lock args
+8. All 5 attack scenarios rejected on devnet, 3 happy path scenarios pass
+
 ## Requirement Coverage Validation
 
-All 20 v1.1 requirements are mapped:
+All 27 v1.1 requirements are mapped:
 
 | Phase | Requirements | Count |
 |-------|-------------|-------|
@@ -90,7 +115,8 @@ All 20 v1.1 requirements are mapped:
 | Phase 2 | TXB-01, TXB-02, TXB-03, TXB-04, MERGE-01, IDX-01, IDX-02 | 7 |
 | Phase 3 | UI-01, UI-02, UI-03 | 3 |
 | Phase 5 | BUG-01 | 1 |
-| **Total** | | **21** |
+| Phase 6 | SEC-01, SEC-02, SEC-03, SEC-04, SEC-05, SEC-06 | 6 |
+| **Total** | | **27** |
 
 ---
 
