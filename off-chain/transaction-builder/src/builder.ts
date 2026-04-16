@@ -486,7 +486,12 @@ export class TransactionBuilder {
     console.log(`  Pledge capacity: ${pledgeTotalCapacity} shannons`);
     console.log(`  Receipt capacity: ${receiptCapacity} shannons`);
 
-    // Build the transaction
+    // Build the transaction with cross-referencing args
+    // Pledge type script args = receipt type script hash (32 bytes)
+    // Receipt type script args = pledge type script hash (32 bytes)
+    const pledgeTypeScriptArgs = ccc.hexFrom(this.receiptContract.codeHash.slice(2)); // Remove 0x prefix
+    const receiptTypeScriptArgs = ccc.hexFrom(this.pledgeContract.codeHash.slice(2)); // Remove 0x prefix
+
     const tx = ccc.Transaction.from({
       outputs: [
         {
@@ -500,7 +505,7 @@ export class TransactionBuilder {
           type: {
             codeHash: this.pledgeContract.codeHash,
             hashType: this.pledgeContract.hashType,
-            args: "0x",
+            args: pledgeTypeScriptArgs,
           },
         },
         {
@@ -510,7 +515,7 @@ export class TransactionBuilder {
           type: {
             codeHash: this.receiptContract.codeHash,
             hashType: this.receiptContract.hashType,
-            args: "0x",
+            args: receiptTypeScriptArgs,
           },
         },
       ],
