@@ -33,6 +33,11 @@ const ERROR_SINCE_BELOW_DEADLINE: i8 = 13;
 
 // Campaign cell_dep errors
 const ERROR_CAMPAIGN_STILL_ACTIVE: i8 = 20;
+const ERROR_CAMPAIGN_CELL_DEP_MISSING: i8 = 21;
+
+/// Grace period: ~180 days at 8s/block = 1,944,000 blocks
+/// After this period past deadline, allow refund without campaign cell_dep
+const GRACE_PERIOD_BLOCKS: u64 = 1_944_000;
 
 // Output verification errors
 const ERROR_LOAD_CAPACITY: i8 = 30;
@@ -298,9 +303,9 @@ pub fn program_entry() -> i8 {
         Err(_) => return ERROR_LOAD_SINCE,
     };
 
-    let is_after_deadline = if since_raw == 0 {
+    let (is_after_deadline, since_block) = if since_raw == 0 {
         // since=0 means no time constraint — before deadline path
-        false
+        (false, 0u64)
     } else {
         // Parse the since value to verify it's absolute block number
         let since = Since::new(since_raw);
@@ -312,7 +317,7 @@ pub fn program_entry() -> i8 {
                 if block < lock_args.deadline_block {
                     return ERROR_SINCE_BELOW_DEADLINE;
                 }
-                true
+                (true, block)
             }
             _ => return ERROR_INVALID_SINCE,
         }
@@ -333,9 +338,17 @@ pub fn program_entry() -> i8 {
             }
         }
         None => {
-            // D-06: Fail-safe refund — no campaign cell_dep means default to backer refund
-            debug!("No campaign cell_dep found — fail-safe refund to backer");
-            validate_refund(&lock_args)
+            // Issue 1 fix: campaign cell_dep is mandatory within grace period
+            // Grace period fail-safe: allow refund only well past deadline
+            let grace_deadline = lock_args.deadline_block
+                .saturating_add(GRACE_PERIOD_BLOCKS);
+            if since_block >= grace_deadline {
+                debug!("Grace period expired — fail-safe refund allowed");
+                validate_refund(&lock_args)
+            } else {
+                debug!("Campaign cell_dep required (grace period active)");
+                ERROR_CAMPAIGN_CELL_DEP_MISSING
+            }
         }
     }
 }
