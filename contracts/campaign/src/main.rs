@@ -17,10 +17,11 @@ ckb_std::default_alloc!(16384, 1258306, 64);
 
 use ckb_std::{
     debug,
-    high_level::{load_script, load_cell_data},
+    high_level::{load_script, load_cell_data, load_input_since},
     ckb_constants::Source,
     error::SysError,
     type_id::check_type_id,
+    since::{Since, LockValue},
 };
 
 /// Error codes
@@ -30,6 +31,12 @@ const ERROR_INVALID_FINALIZATION: i8 = 10;
 #[allow(dead_code)]
 const ERROR_MODIFICATION_NOT_ALLOWED: i8 = 11;
 const ERROR_INVALID_TYPE_ID: i8 = 12;
+const ERROR_DESTRUCTION_NOT_ALLOWED: i8 = 13;
+const ERROR_LOAD_SINCE: i8 = 14;
+
+/// Grace period: ~180 days at 8s/block = 1,944,000 blocks
+/// Success campaigns can only be destroyed after this period past deadline
+const GRACE_PERIOD_BLOCKS: u64 = 1_944_000;
 
 /// Campaign status enum
 #[repr(u8)]
@@ -136,7 +143,37 @@ impl CampaignData {
 }
 
 /// Validate a finalization (state transition from Active to Success/Failed)
-fn validate_finalization(old: &CampaignData, new: &CampaignData) -> Result<(), i8> {
+fn validate_finalization(old_data: &[u8], new_data: &[u8], old: &CampaignData, new: &CampaignData) -> Result<(), i8> {
+    // Issue 5 fix: enforce deadline via since field (defense in depth)
+    // The campaign-lock script also enforces this, but type script check
+    // ensures deadline is respected even if lock script changes.
+    let since_raw = load_input_since(0, Source::GroupInput)
+        .map_err(|_| ERROR_LOAD_SINCE)?;
+
+    if since_raw == 0 {
+        debug!("Finalization: since field required (deadline enforcement)");
+        return Err(ERROR_INVALID_FINALIZATION);
+    }
+
+    let since = Since::new(since_raw);
+    if !since.is_absolute() || !since.flags_is_valid() {
+        debug!("Finalization: invalid since encoding");
+        return Err(ERROR_INVALID_FINALIZATION);
+    }
+
+    match since.extract_lock_value() {
+        Some(LockValue::BlockNumber(block)) => {
+            if block < old.deadline_block {
+                debug!("Finalization: since {} < deadline {}", block, old.deadline_block);
+                return Err(ERROR_INVALID_FINALIZATION);
+            }
+        }
+        _ => {
+            debug!("Finalization: since must be absolute block number");
+            return Err(ERROR_INVALID_FINALIZATION);
+        }
+    }
+
     // Old campaign must be Active
     if old.status != CampaignStatus::Active {
         debug!("Finalization: old campaign must be Active");
@@ -159,6 +196,23 @@ fn validate_finalization(old: &CampaignData, new: &CampaignData) -> Result<(), i
     if old.total_pledged != new.total_pledged {
         debug!("Finalization: total_pledged changed");
         return Err(ERROR_INVALID_FINALIZATION);
+    }
+
+    // Issue 6b fix: reserved bytes and metadata must not change
+    if old_data.len() >= CampaignData::SIZE && new_data.len() >= CampaignData::SIZE {
+        // Check reserved bytes [57..65] are identical
+        if old_data[57..65] != new_data[57..65] {
+            debug!("Finalization: reserved bytes changed");
+            return Err(ERROR_INVALID_FINALIZATION);
+        }
+
+        // Check metadata tail (bytes 65+) is identical
+        let old_tail = &old_data[CampaignData::SIZE..];
+        let new_tail = &new_data[CampaignData::SIZE..];
+        if old_tail != new_tail {
+            debug!("Finalization: metadata changed");
+            return Err(ERROR_INVALID_FINALIZATION);
+        }
     }
 
     // New status must be either Success or Failed (not Active)
@@ -247,7 +301,7 @@ pub fn program_entry() -> i8 {
                 Ok(c) => c,
                 Err(code) => return code,
             };
-            if let Err(code) = validate_finalization(&old, &new_campaign) {
+            if let Err(code) = validate_finalization(&old_data, &new_data, &old, &new_campaign) {
                 return code;
             }
             debug!("Campaign finalization passed");
@@ -255,12 +309,63 @@ pub fn program_entry() -> i8 {
         }
 
         // Destruction: has input, no output
-        // CAMP-02: Full destruction protection is enforced off-chain (D-09).
-        // The pledge lock script's fail-safe refund (D-06) protects backers
-        // regardless — if campaign cell is destroyed, backers get automatic refund.
+        // Issue 1 fix: restrict destruction by campaign status
         (true, false) => {
-            debug!("Campaign destruction — backers protected by fail-safe refund (D-06)");
-            0
+            let data = match load_cell_data(0, Source::GroupInput) {
+                Ok(d) => d,
+                Err(_) => return ERROR_LOAD_DATA,
+            };
+            let campaign = match CampaignData::from_bytes(&data) {
+                Ok(c) => c,
+                Err(code) => return code,
+            };
+
+            match campaign.status {
+                CampaignStatus::Failed => {
+                    // Failed campaigns can be destroyed — refund uses backer_lock_hash
+                    // from pledge-lock args, doesn't need campaign cell_dep
+                    debug!("Failed campaign destruction allowed");
+                    0
+                }
+                CampaignStatus::Active => {
+                    // Active campaigns should not be destroyed
+                    debug!("Active campaign destruction blocked");
+                    ERROR_DESTRUCTION_NOT_ALLOWED
+                }
+                CampaignStatus::Success => {
+                    // Success campaigns: allow destruction only after grace period
+                    // This ensures pledges can still reference the campaign during
+                    // normal release operations
+                    let since_raw = match load_input_since(0, Source::GroupInput) {
+                        Ok(v) => v,
+                        Err(_) => return ERROR_LOAD_SINCE,
+                    };
+
+                    if since_raw == 0 {
+                        debug!("Success campaign destruction blocked — since field required");
+                        return ERROR_DESTRUCTION_NOT_ALLOWED;
+                    }
+
+                    let since = Since::new(since_raw);
+                    if !since.is_absolute() || !since.flags_is_valid() {
+                        debug!("Success campaign destruction blocked — invalid since encoding");
+                        return ERROR_DESTRUCTION_NOT_ALLOWED;
+                    }
+
+                    let grace_deadline = campaign.deadline_block
+                        .saturating_add(GRACE_PERIOD_BLOCKS);
+                    match since.extract_lock_value() {
+                        Some(LockValue::BlockNumber(block)) if block >= grace_deadline => {
+                            debug!("Success campaign destruction after grace period allowed");
+                            0
+                        }
+                        _ => {
+                            debug!("Success campaign destruction blocked — grace period active");
+                            ERROR_DESTRUCTION_NOT_ALLOWED
+                        }
+                    }
+                }
+            }
         }
 
         // No input, no output — shouldn't happen but allow
