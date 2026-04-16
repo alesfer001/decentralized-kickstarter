@@ -633,8 +633,8 @@ export class TransactionBuilder {
 
   /**
    * Permissionless refund: triggered after deadline when campaign failed.
-   * Pledge lock routes funds to backer. Receipt cell is consumed to prove backer identity.
-   * The signer provides fee cells and signs for the receipt cell (backer must be the signer).
+   * Pledge lock routes funds to backer. Receipt is not consumed.
+   * No backer signature needed — any wallet can trigger the refund.
    */
   async permissionlessRefund(signer: ccc.Signer, params: PermissionlessRefundParams): Promise<string> {
     console.log("Building permissionless refund transaction...");
@@ -642,9 +642,9 @@ export class TransactionBuilder {
     // Since value for pledge cell: absolute block number >= deadline
     const sinceValue = params.deadlineBlock;
 
-    // Total capacity returned to backer: pledge capacity + receipt capacity (minus small fee)
+    // Total capacity returned to backer: pledge capacity (minus small fee)
     const txFee = BigInt(100000); // 0.001 CKB fee — within MAX_FEE (1 CKB)
-    const backerOutputCapacity = params.pledgeCapacity + params.receiptCapacity - txFee;
+    const backerOutputCapacity = params.pledgeCapacity - txFee;
 
     // Build cell deps
     const cellDeps: Array<{ outPoint: { txHash: string; index: number }; depType: "code" | "depGroup" }> = [
@@ -659,13 +659,6 @@ export class TransactionBuilder {
         outPoint: {
           txHash: this.pledgeContract.txHash,
           index: this.pledgeContract.index,
-        },
-        depType: "code",
-      },
-      {
-        outPoint: {
-          txHash: this.receiptContract.txHash,
-          index: this.receiptContract.index,
         },
         depType: "code",
       },
@@ -692,13 +685,6 @@ export class TransactionBuilder {
             index: params.pledgeOutPoint.index,
           },
           since: sinceValue,
-        },
-        {
-          // Receipt cell (backer's secp256k1 lock -- signer must be backer)
-          previousOutput: {
-            txHash: params.receiptOutPoint.txHash,
-            index: params.receiptOutPoint.index,
-          },
         },
       ],
       outputs: [

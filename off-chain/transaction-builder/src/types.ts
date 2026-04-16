@@ -112,12 +112,11 @@ export interface PermissionlessReleaseParams {
 
 /**
  * Parameters for permissionless refund (anyone triggers, lock routes funds to backer)
+ * Receipt is not consumed — only the pledge cell is spent.
  */
 export interface PermissionlessRefundParams {
   pledgeOutPoint: { txHash: string; index: number };
   pledgeCapacity: bigint;
-  receiptOutPoint: { txHash: string; index: number };
-  receiptCapacity: bigint;
   campaignCellDep?: { txHash: string; index: number };  // optional for fail-safe refund
   backerLockScript: { codeHash: string; hashType: string; args: string };
   deadlineBlock: bigint;
