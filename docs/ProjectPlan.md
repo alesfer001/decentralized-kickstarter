@@ -802,7 +802,7 @@ Data:
 - [x] Real wallet integration (JoyID via CCC connector) — verified on testnet
 - [ ] User dashboard (my campaigns, my pledges)
 - [x] Testnet deployment — contracts, indexer (Render), frontend (Vercel)
-- [ ] Testnet redeployment with Phase 16 hardened contracts
+- [x] Testnet redeployment with Phase 16 hardened contracts — deployed 2026-04-20
 - [ ] Mainnet deployment
 - [ ] Grant application
 - [ ] Automatic finalization bot (Phase 17)
@@ -1374,4 +1374,16 @@ Addressed all 6 issues from CKB core developer Officeyutong's [CKBuilder Project
 - Bug found during E2E: `load_cell_type_hash` vs `code_hash` mismatch in receipt/pledge cross-check — fixed with `load_cell_type` + `code_hash()` comparison
 - All 5 contracts rebuilt, deployed to devnet — 3/3 lifecycle tests pass, 3/3 attack scenarios rejected
 - Code review: 2 critical (advisory), 4 warnings — see 06-REVIEW.md
-- Next: redeploy hardened contracts to testnet, external audit
+- Next: external audit
+
+**2026-04-20:** Testnet Redeployment — Phase 16 Hardened Contracts
+- Deployed all 5 hardened contracts to CKB testnet (Pudge):
+  - Campaign: code hash `0x520ff6...a9c897`, tx `0x61f676...331ade`
+  - Campaign-Lock: code hash `0x64397e...a52822`, tx `0x45df1c...e7edfd`
+  - Pledge: code hash `0xe45d09...8eb024`, tx `0x8bc1ca...63a745`
+  - Pledge-Lock: code hash `0xbdcd10...237c48`, tx `0xa7df0d...1b7f36`
+  - Receipt: code hash `0xff20a9...694ed6`, tx `0x83cfe3...c4848f`
+- Updated Vercel frontend env vars (12 vars: code hashes + tx hashes for all 5 contracts + network + API URL)
+- Updated Render indexer env vars (7 vars: 5 code hashes + CKB_NETWORK + CKB_RPC_URL)
+- Vercel production redeployed, Render rebuild triggered
+- Deployer account: `ckt1qzda0...2kh5k2` (funded via Pudge Faucet)
