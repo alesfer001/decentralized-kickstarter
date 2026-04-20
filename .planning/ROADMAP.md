@@ -93,7 +93,7 @@ Plans:
 - [x] 06-03-PLAN.md — Receipt hardening + permissionless refund: cross-check pledge data on receipt creation, drop receipt from refund inputs (Issue 2)
 - [x] 06-04-PLAN.md — Pledge type partial refund cross-check: verify amount difference == receipt pledge_amount (Issue 3)
 - [x] 06-05-PLAN.md — Off-chain updates: indexer network-aware client, builder contract args, deploy script (Issue 6a + integration)
-- [ ] 06-06-PLAN.md — Build, deploy to devnet, happy path + attack scenario E2E tests
+- [x] 06-06-PLAN.md — Build, deploy to devnet, happy path + attack scenario E2E tests
 
 **Success criteria:**
 1. Fail-safe backdoor closed — refund without campaign cell_dep rejected within grace period (1,944,000 blocks ≈ 180 days)
