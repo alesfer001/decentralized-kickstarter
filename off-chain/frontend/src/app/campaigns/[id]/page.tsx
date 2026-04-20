@@ -223,7 +223,7 @@ export default function CampaignDetailPage() {
             type: {
               codeHash: CONTRACTS.pledge.codeHash,
               hashType: CONTRACTS.pledge.hashType,
-              args: "0x",
+              args: CONTRACTS.receipt.codeHash,
             },
           },
           {
@@ -233,7 +233,7 @@ export default function CampaignDetailPage() {
             type: {
               codeHash: CONTRACTS.receipt.codeHash,
               hashType: CONTRACTS.receipt.hashType,
-              args: "0x",
+              args: CONTRACTS.pledge.codeHash,
             },
           },
         ],
