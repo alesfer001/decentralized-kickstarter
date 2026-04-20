@@ -796,13 +796,17 @@ Data:
   - Developer guide: architecture, contract build/deploy, API reference, env vars
 
 ### Not Yet Implemented
-- [ ] **Custom Pledge Lock Script** for automatic fund distribution (v1.1 — critical for production)
+- [x] **Custom Pledge Lock Script** for automatic fund distribution (v1.1) — completed in Phase 15
+- [x] **Security hardening** — all 6 Officeyutong review issues fixed in Phase 16
 - [ ] IPFS integration for off-chain metadata storage (images, rich text)
 - [x] Real wallet integration (JoyID via CCC connector) — verified on testnet
 - [ ] User dashboard (my campaigns, my pledges)
-- [x] Testnet deployment — contracts, indexer (ngrok), frontend (Vercel)
+- [x] Testnet deployment — contracts, indexer (Render), frontend (Vercel)
+- [ ] Testnet redeployment with Phase 16 hardened contracts
 - [ ] Mainnet deployment
 - [ ] Grant application
+- [ ] Automatic finalization bot (Phase 17)
+- [ ] External security audit (~1100 lines Rust — recommended by Officeyutong)
 
 ---
 
@@ -1239,7 +1243,57 @@ Bugs found (must fix before v1.1 is usable):
   - Success path: create(Account #0) → pledge 250 CKB(Account #1) → non-creator finalize(Account #1) → trigger release(Account #1) → "All pledges released to creator"
   - Failure path: create(Account #0, 10K goal) → pledge 100 CKB(Account #1) → non-creator finalize(Account #1) → trigger refund(Account #1) → "No pledges" (funds returned to backer)
 
-### Phase 16: Automatic Finalization Bot
+### Phase 16: Security Hardening — Officeyutong Review Fixes ✓
+
+Addressed all 6 issues from CKB core developer Officeyutong's [CKBuilder Projects code review](https://github.com/Nervos-Community-Catalyst/CKBuilder-projects/issues/6). Two HIGH-severity mainnet blockers + four MEDIUM/SMALL hardening items.
+
+#### Issue 1 — Fail-safe Refund Backdoor (HIGH) ✓
+- [x] **Root cause:** Pledge-lock `None` branch defaulted to backer refund when campaign cell_dep missing — a backer could destroy the campaign cell and force-refund a successful campaign
+- [x] **Fix (pledge-lock):** Replaced `None` fallback with grace period check. Campaign cell_dep mandatory within 1,944,000 blocks (~180 days). After grace period, fail-safe refund allowed for genuinely lost campaigns.
+- [x] **Fix (campaign type):** Restricted destruction — Failed campaigns can be destroyed anytime, Success campaigns blocked until grace period expires, Active campaigns cannot be destroyed.
+- [x] Constants: `GRACE_PERIOD_BLOCKS = 1_944_000`, `ERROR_CAMPAIGN_CELL_DEP_MISSING = 21`, `ERROR_DESTRUCTION_NOT_ALLOWED = 13`
+
+#### Issue 2 — Receipt Check Too Loose + Refund Not Permissionless (HIGH) ✓
+- [x] **Root cause:** Receipt creation only checked `pledge_amount > 0` and `backer_lock_hash != 0` — didn't verify against actual pledge cell. Refund required receipt as input (locked with backer's secp256k1), making it backer-only.
+- [x] **Fix (receipt type):** Cross-checks sibling pledge cell via `load_cell_type` code_hash matching. Verifies `pledge_amount == receipt.pledge_amount` AND `pledge.backer_lock_hash == receipt.backer_lock_hash`. Receipt args store pledge contract code hash (32 bytes).
+- [x] **Fix (builder):** `permissionlessRefund` no longer requires receipt as input. Refund validated entirely by pledge-lock. Any wallet can trigger.
+
+#### Issue 3 — Partial Refund Doesn't Cross-Check Amount (MEDIUM) ✓
+- [x] **Root cause:** `validate_partial_refund` only checked `output.amount < input.amount` — difference could be any value.
+- [x] **Fix (pledge type):** Scans transaction inputs for destroyed receipt by code_hash. Asserts `input_amount - output_amount == receipt.pledge_amount`. Pledge type args store receipt contract code hash (32 bytes).
+- [x] Constants: `ERROR_REFUND_AMOUNT_MISMATCH = 16`, `ERROR_NO_RECEIPT_IN_INPUTS = 17`
+
+#### Issue 4 — Merge Deadline + Lock Args (MEDIUM) ✓
+- [x] **Root cause:** Merge after deadline is wasteful (not harmful — output retains same lock). Lock args comparison is implicit via GroupInput but not explicit.
+- [x] **Fix (pledge-lock):** Added explicit lock args verification loop on merge output (defense in depth). Documented CKB since floor constraint (merge timing limitation).
+
+#### Issue 5 — Finalization Since Enforcement (MEDIUM) ✓
+- [x] **Root cause:** Campaign type script finalization didn't check the since field — relied entirely on campaign-lock.
+- [x] **Fix (campaign type):** Added `load_input_since` check in finalization path. Validates `since >= deadline_block` as defense-in-depth alongside campaign-lock. Also validates reserved bytes [57..65] and metadata tail unchanged during finalization (Issue 6b).
+
+#### Issue 6 — Smaller Items (SMALL) ✓
+- [x] **6a — Indexer network client:** Replaced hard-coded `ClientPublicTestnet` with `CKB_NETWORK` env var. Supports devnet (OffCKB overrides), testnet, mainnet.
+- [x] **6b — Reserved bytes + metadata:** Finalization validates `old_data[57..65] == new_data[57..65]` and `old_data[65..] == new_data[65..]`.
+- [x] **6c — Capacity buffer in UI:** Already fixed in Phase 15.5.3 (BUG-4).
+
+#### Off-Chain Updates ✓
+- [x] Transaction builder: `createPledgeWithReceipt` sets cross-referencing args (receipt args = pledge code hash, pledge args = receipt code hash)
+- [x] Deploy script: handles all 5 contracts (campaign, pledge, pledge-lock, receipt, campaign-lock)
+- [x] Test lifecycle script: updated for receipt-free refund
+
+#### E2E Validation ✓
+- [x] All 5 contracts rebuilt, stripped, deployed to devnet with new code hashes
+- [x] **Lifecycle tests (3/3 pass):** Success → release, Failure → refund, Merge → release
+- [x] **Security attack tests (3/3 rejected):**
+  - Attack 1: Refund without campaign cell_dep on Success campaign → **REJECTED** (error code 21)
+  - Attack 2: Destroy Success campaign within grace period → **REJECTED** (campaign-lock blocks)
+  - Attack 3: Premature finalization before deadline → **REJECTED** (since Immature enforcement)
+
+**Bug found during E2E testing:** Receipt and pledge contracts used `load_cell_type_hash` (returns hash of full type script including args) but compared against a code hash in args. Fixed by switching to `load_cell_type` with `code_hash()` field comparison.
+
+**Code review findings (advisory):** 2 critical (non-null assertion in builder, silent indexer failure), 4 warnings (hardcoded lock script code hash, empty catch blocks, type safety). See `06-REVIEW.md`.
+
+### Phase 17: Automatic Finalization Bot
 
 **Problem:** After the deadline passes, someone must manually click "Finalize Campaign" to transition the on-chain status. While this is permissionless (anyone can do it), it still requires a manual trigger. This creates friction — campaigns sit in "Expired - Needs Finalization" state until someone acts.
 
@@ -1259,7 +1313,7 @@ Bugs found (must fix before v1.1 is usable):
 - Can run alongside the indexer or as a separate service
 - Fail-safe: if the bot is down, users can still finalize manually from the UI
 
-### Phase 17: Platform Business Model & Treasury
+### Phase 18: Platform Business Model & Treasury
 
 **Purpose:** Design a sustainable business model for the platform. Currently the platform operates at zero cost to users — no fees are collected. This phase explores revenue mechanisms and treasury management to fund ongoing development, infrastructure, and the finalization bot.
 
@@ -1308,3 +1362,16 @@ Bugs found (must fix before v1.1 is usable):
   - BUG-3: No distribution trigger UI (funds stuck after finalization) — CRITICAL
   - BUG-4: Receipt cell cost not shown in pledge form (user confusion)
   - BUG-5: Backer count shows 0 on home page cards (minor)
+
+**2026-04-20:** Phase 16 — Security Hardening (Officeyutong Review Fixes)
+- Addressed all 6 issues from CKB core developer Officeyutong's code review (2 HIGH, 4 MEDIUM/SMALL)
+- Issue 1 (HIGH): Closed fail-safe refund backdoor — grace period (1.9M blocks ≈ 180 days) + campaign destruction protection
+- Issue 2 (HIGH): Hardened receipt creation (pledge cross-check by code_hash) + made refund fully permissionless (receipt no longer consumed)
+- Issue 3: Partial refund amount cross-checked against destroyed receipt's pledge_amount
+- Issue 4: Merge path lock args validation + timing documentation
+- Issue 5: Campaign finalization enforces since >= deadline_block (defense in depth)
+- Issue 6: Indexer network-aware client, reserved bytes + metadata validation during finalization
+- Bug found during E2E: `load_cell_type_hash` vs `code_hash` mismatch in receipt/pledge cross-check — fixed with `load_cell_type` + `code_hash()` comparison
+- All 5 contracts rebuilt, deployed to devnet — 3/3 lifecycle tests pass, 3/3 attack scenarios rejected
+- Code review: 2 critical (advisory), 4 warnings — see 06-REVIEW.md
+- Next: redeploy hardened contracts to testnet, external audit
