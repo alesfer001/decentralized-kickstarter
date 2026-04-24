@@ -1,0 +1,344 @@
+import { ccc } from "@ckb-ccc/core";
+import { Database, DBCampaign, DBPledge } from "./database";
+import { CampaignStatus } from "./types";
+
+/**
+ * Configuration for the finalization bot
+ */
+export interface BotConfig {
+  lowBalanceThreshold: bigint; // in shannons (e.g., BigInt(50 * 100000000) for 50 CKB)
+  pledgeLockCodeHash: string;
+  campaignCodeHash: string;
+  pledgeCodeHash: string;
+}
+
+/**
+ * Interface for transaction builder (used for dependency injection)
+ * We don't import the actual builder to avoid cross-package compilation issues
+ */
+export interface ITransactionBuilder {
+  finalizeCampaign(signer: ccc.Signer, params: any): Promise<string>;
+  permissionlessRelease(signer: ccc.Signer, params: any): Promise<string>;
+  permissionlessRefund(signer: ccc.Signer, params: any): Promise<string>;
+}
+
+/**
+ * Automatic finalization bot that:
+ * 1. Detects expired campaigns (deadline passed, status still Active)
+ * 2. Submits finalization transactions to mark them Success/Failed on-chain
+ * 3. Triggers permissionless release (success) or refund (failure) for all associated pledges
+ * 4. Monitors bot wallet balance and logs warnings if low
+ *
+ * Integrated into the indexer's polling loop. Runs once per poll cycle (default 10s).
+ */
+export class FinalizationBot {
+  private client: ccc.Client;
+  private signer: ccc.Signer;
+  private db: Database;
+  private builder: ITransactionBuilder;
+  private config: BotConfig;
+  private rpcUrl: string;
+
+  constructor(
+    client: ccc.Client,
+    signer: ccc.Signer,
+    db: Database,
+    builder: ITransactionBuilder,
+    config: BotConfig,
+    rpcUrl: string
+  ) {
+    this.client = client;
+    this.signer = signer;
+    this.db = db;
+    this.builder = builder;
+    this.config = config;
+    this.rpcUrl = rpcUrl;
+  }
+
+  /**
+   * Main bot entry point: called once per polling cycle.
+   * Scans for expired campaigns and submits finalization transactions.
+   * Process follows D-03: full end-to-end automation (finalize, then release/refund in subsequent cycles).
+   */
+  async processPendingFinalizations(): Promise<void> {
+    try {
+      // Check bot balance first
+      await this.checkBotBalance();
+
+      // Scan for expired campaigns needing finalization
+      const currentBlock = await this.getCurrentBlockNumber();
+      const campaignsToFinalize = this.findExpiredCampaigns(currentBlock);
+
+      if (campaignsToFinalize.length === 0) {
+        return; // Nothing to do this cycle
+      }
+
+      console.log(`Bot: Found ${campaignsToFinalize.length} expired campaigns to finalize`);
+
+      // Finalize each expired campaign
+      for (const campaign of campaignsToFinalize) {
+        await this.finalizeSingleCampaign(campaign);
+      }
+
+      // After finalization, process pledges for release/refund in subsequent cycles
+      // This happens naturally as the polling loop continues (D-04)
+    } catch (error) {
+      console.error("Bot error in processPendingFinalizations:", error);
+      // Continue on error — will retry next cycle
+    }
+  }
+
+  /**
+   * Find campaigns where deadline has passed but on-chain status is still Active.
+   * These are candidates for finalization.
+   */
+  private findExpiredCampaigns(currentBlock: bigint): DBCampaign[] {
+    const allCampaigns = this.db.getAllCampaigns();
+    return allCampaigns.filter((campaign) => {
+      // Only finalize campaigns that are still Active on-chain
+      if (campaign.status !== CampaignStatus.Active) {
+        return false;
+      }
+
+      // Check if deadline has passed
+      const deadlineBlock = BigInt(campaign.deadline_block);
+      if (deadlineBlock > currentBlock) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * Finalize a single campaign (mark it Success or Failed on-chain).
+   */
+  private async finalizeSingleCampaign(campaign: DBCampaign): Promise<void> {
+    try {
+      // Determine outcome: Success if total_pledged >= funding_goal, else Failed
+      const totalPledged = BigInt(campaign.total_pledged);
+      const fundingGoal = BigInt(campaign.funding_goal);
+      const newStatus =
+        totalPledged >= fundingGoal
+          ? CampaignStatus.Success
+          : CampaignStatus.Failed;
+
+      console.log(
+        `Bot: Finalizing campaign ${campaign.id} to ${newStatus === CampaignStatus.Success ? "Success" : "Failed"}`
+      );
+
+      // Build finalization transaction parameters
+      const params = {
+        campaignOutPoint: {
+          txHash: campaign.tx_hash,
+          index: campaign.output_index,
+        },
+        campaignData: {
+          creatorLockHash: campaign.creator_lock_hash,
+          fundingGoal: fundingGoal,
+          deadlineBlock: BigInt(campaign.deadline_block),
+          totalPledged: totalPledged,
+          title: campaign.title || undefined,
+          description: campaign.description || undefined,
+        },
+        newStatus: newStatus,
+      };
+
+      // Submit finalization transaction
+      const txHash = await this.builder.finalizeCampaign(this.signer, params);
+      console.log(
+        `Bot: Finalized campaign ${campaign.id}: ${txHash}`
+      );
+
+      // Process pledges for release/refund happens in subsequent polling cycles (D-04)
+    } catch (error) {
+      console.error(
+        `Bot: Failed to finalize campaign ${campaign.id}:`,
+        error
+      );
+      // No state change — will retry next polling cycle (D-08)
+    }
+  }
+
+  /**
+   * Find campaigns with Success status on-chain and trigger permissionless release for pledges.
+   * This is called separately from finalization to allow pledge processing after finalization completes.
+   */
+  async releaseSuccessfulPledges(): Promise<void> {
+    try {
+      const successCampaigns = this.db
+        .getAllCampaigns()
+        .filter((c) => c.status === CampaignStatus.Success);
+
+      if (successCampaigns.length === 0) {
+        return;
+      }
+
+      console.log(
+        `Bot: Processing release for ${successCampaigns.length} successful campaigns`
+      );
+
+      for (const campaign of successCampaigns) {
+        await this.releasePledgesForCampaign(campaign);
+      }
+    } catch (error) {
+      console.error("Bot error in releaseSuccessfulPledges:", error);
+    }
+  }
+
+  /**
+   * Release pledges for a single successful campaign.
+   */
+  private async releasePledgesForCampaign(campaign: DBCampaign): Promise<void> {
+    const pledges = this.db.getPledgesForCampaign(campaign.tx_hash);
+
+    for (const pledge of pledges) {
+      try {
+        console.log(
+          `Bot: Releasing pledge ${pledge.id} (amount: ${pledge.amount} shannons)`
+        );
+
+        // Creator's lock script (standard secp256k1 blake160)
+        const creatorLockScript = {
+          codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+          hashType: "type" as const,
+          args: campaign.creator_lock_hash,
+        };
+
+        const params = {
+          pledgeOutPoint: {
+            txHash: pledge.tx_hash,
+            index: pledge.output_index,
+          },
+          pledgeCapacity: BigInt(pledge.amount),
+          campaignCellDep: {
+            txHash: campaign.tx_hash,
+            index: campaign.output_index,
+          },
+          creatorLockScript: creatorLockScript,
+          deadlineBlock: BigInt(campaign.deadline_block),
+        };
+
+        const txHash = await this.builder.permissionlessRelease(
+          this.signer,
+          params
+        );
+        console.log(`Bot: Released pledge ${pledge.id}: ${txHash}`);
+      } catch (error) {
+        console.error(
+          `Bot: Failed to release pledge ${pledge.id}:`,
+          error
+        );
+        // No state change — will retry next polling cycle
+      }
+    }
+  }
+
+  /**
+   * Find campaigns with Failed status on-chain and trigger permissionless refund for pledges.
+   * This is called separately from finalization to allow pledge processing after finalization completes.
+   */
+  async refundFailedPledges(): Promise<void> {
+    try {
+      const failedCampaigns = this.db
+        .getAllCampaigns()
+        .filter((c) => c.status === CampaignStatus.Failed);
+
+      if (failedCampaigns.length === 0) {
+        return;
+      }
+
+      console.log(
+        `Bot: Processing refund for ${failedCampaigns.length} failed campaigns`
+      );
+
+      for (const campaign of failedCampaigns) {
+        await this.refundPledgesForCampaign(campaign);
+      }
+    } catch (error) {
+      console.error("Bot error in refundFailedPledges:", error);
+    }
+  }
+
+  /**
+   * Refund pledges for a single failed campaign.
+   */
+  private async refundPledgesForCampaign(campaign: DBCampaign): Promise<void> {
+    const pledges = this.db.getPledgesForCampaign(campaign.tx_hash);
+
+    for (const pledge of pledges) {
+      try {
+        console.log(
+          `Bot: Refunding pledge ${pledge.id} (amount: ${pledge.amount} shannons)`
+        );
+
+        // Backer's lock script (standard secp256k1 blake160)
+        const backerLockScript = {
+          codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+          hashType: "type" as const,
+          args: pledge.backer_lock_hash,
+        };
+
+        const params = {
+          pledgeOutPoint: {
+            txHash: pledge.tx_hash,
+            index: pledge.output_index,
+          },
+          pledgeCapacity: BigInt(pledge.amount),
+          backerLockScript: backerLockScript,
+          deadlineBlock: BigInt(campaign.deadline_block),
+        };
+
+        const txHash = await this.builder.permissionlessRefund(
+          this.signer,
+          params
+        );
+        console.log(`Bot: Refunded pledge ${pledge.id}: ${txHash}`);
+      } catch (error) {
+        console.error(
+          `Bot: Failed to refund pledge ${pledge.id}:`,
+          error
+        );
+        // No state change — will retry next polling cycle
+      }
+    }
+  }
+
+  /**
+   * Check bot wallet balance and log warning if below threshold (per D-06, D-09).
+   */
+  private async checkBotBalance(): Promise<void> {
+    try {
+      const balance = await this.signer.getBalance();
+
+      const balanceCkb = Number(balance) / 100000000;
+      const thresholdCkb = Number(this.config.lowBalanceThreshold) / 100000000;
+
+      if (balance < this.config.lowBalanceThreshold) {
+        console.warn(
+          `⚠️  Bot wallet low balance: ${balanceCkb.toFixed(2)} CKB (threshold: ${thresholdCkb.toFixed(2)} CKB). Please fund the bot wallet.`
+        );
+      } else {
+        console.log(
+          `Bot balance: ${balanceCkb.toFixed(2)} CKB`
+        );
+      }
+    } catch (error) {
+      console.error("Bot error checking balance:", error);
+    }
+  }
+
+  /**
+   * Get current block number from CKB node via RPC.
+   * Follows the same pattern as CampaignIndexer.getCurrentBlockNumber()
+   */
+  private async getCurrentBlockNumber(): Promise<bigint> {
+    const res = await fetch(this.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "get_tip_block_number", params: [] }),
+    });
+    const json = (await res.json()) as { result: string };
+    return BigInt(json.result);
+  }
+}
