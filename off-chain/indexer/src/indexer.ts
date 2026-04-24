@@ -2,6 +2,7 @@ import { ccc } from "@ckb-ccc/core";
 import { Campaign, Pledge, Receipt, CampaignStatus } from "./types";
 import { parseCampaignData, parsePledgeData, parseReceiptData } from "./parser";
 import { Database, DBCampaign, DBPledge, DBReceipt } from "./database";
+import { FinalizationBot } from "./bot";
 
 /**
  * Create a network-aware CKB client
@@ -127,6 +128,7 @@ export class CampaignIndexer {
   private client: ccc.Client;
   private rpcUrl: string;
   private db: Database;
+  private bot: FinalizationBot | null = null;
   private pollingTimer: ReturnType<typeof setInterval> | null = null;
   private campaignCodeHash: string = "";
   private pledgeCodeHash: string = "";
@@ -144,6 +146,14 @@ export class CampaignIndexer {
    */
   getClient(): ccc.Client {
     return this.client;
+  }
+
+  /**
+   * Inject bot instance into indexer
+   */
+  setBot(bot: FinalizationBot): void {
+    this.bot = bot;
+    console.log("Bot injected into indexer");
   }
 
   /**
@@ -397,14 +407,22 @@ export class CampaignIndexer {
 
     this.pollingTimer = setInterval(async () => {
       try {
+        // 1. Index all campaigns/pledges from CKB
         await this.indexAll(
           this.campaignCodeHash,
           this.pledgeCodeHash,
           this.receiptCodeHash || undefined,
           this.pledgeLockCodeHash || undefined
         );
+
+        // 2. (NEW) Run bot finalization checks
+        if (this.bot) {
+          await this.bot.processPendingFinalizations();
+          await this.bot.releaseSuccessfulPledges();
+          await this.bot.refundFailedPledges();
+        }
       } catch (error) {
-        console.error("Background indexing error:", error);
+        console.error("Polling cycle error:", error);
       }
     }, intervalMs);
 
