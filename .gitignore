@@ -38,3 +38,4 @@ off-chain/indexer/data/
 # OS
 .DS_Store
 Thumbs.db
+off-chain/transaction-builder/src/*.js
