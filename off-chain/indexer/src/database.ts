@@ -26,6 +26,9 @@ export interface DBPledge {
   output_index: number;
   campaign_id: string;
   backer_lock_hash: string;
+  backer_lock_code_hash: string | null;
+  backer_lock_hash_type: string | null;
+  backer_lock_args: string | null;
   amount: string;
   created_at: string;
 }
@@ -87,6 +90,9 @@ export class Database {
         output_index INTEGER NOT NULL,
         campaign_id TEXT NOT NULL,
         backer_lock_hash TEXT NOT NULL,
+        backer_lock_code_hash TEXT,
+        backer_lock_hash_type TEXT,
+        backer_lock_args TEXT,
         amount TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
@@ -126,6 +132,16 @@ export class Database {
       this.db.exec("ALTER TABLE campaigns ADD COLUMN creator_lock_hash_type TEXT");
       this.db.exec("ALTER TABLE campaigns ADD COLUMN creator_lock_args TEXT");
     }
+
+    // Add backer lock script columns if they don't exist (added in Phase 07)
+    const pledgeColumns = this.db.prepare("PRAGMA table_info(pledges)").all() as { name: string }[];
+    const pledgeColumnNames = new Set(pledgeColumns.map((c) => c.name));
+
+    if (!pledgeColumnNames.has("backer_lock_code_hash")) {
+      this.db.exec("ALTER TABLE pledges ADD COLUMN backer_lock_code_hash TEXT");
+      this.db.exec("ALTER TABLE pledges ADD COLUMN backer_lock_hash_type TEXT");
+      this.db.exec("ALTER TABLE pledges ADD COLUMN backer_lock_args TEXT");
+    }
   }
 
   /**
@@ -139,8 +155,8 @@ export class Database {
     `);
 
     const insertPledge = this.db.prepare(`
-      INSERT OR REPLACE INTO pledges (id, tx_hash, output_index, campaign_id, backer_lock_hash, amount, created_at)
-      VALUES (@id, @tx_hash, @output_index, @campaign_id, @backer_lock_hash, @amount, @created_at)
+      INSERT OR REPLACE INTO pledges (id, tx_hash, output_index, campaign_id, backer_lock_hash, backer_lock_code_hash, backer_lock_hash_type, backer_lock_args, amount, created_at)
+      VALUES (@id, @tx_hash, @output_index, @campaign_id, @backer_lock_hash, @backer_lock_code_hash, @backer_lock_hash_type, @backer_lock_args, @amount, @created_at)
     `);
 
     const insertReceipt = this.db.prepare(`

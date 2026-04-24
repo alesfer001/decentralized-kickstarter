@@ -83,7 +83,11 @@ export class FinalizationBot {
       // After finalization, process pledges for release/refund in subsequent cycles
       // This happens naturally as the polling loop continues (D-04)
     } catch (error) {
-      console.error("Bot error in processPendingFinalizations:", error);
+      console.error(`Bot error in processPendingFinalizations:`, {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
       // Continue on error — will retry next cycle
     }
   }
@@ -154,7 +158,11 @@ export class FinalizationBot {
     } catch (error) {
       console.error(
         `Bot: Failed to finalize campaign ${campaign.id}:`,
-        error
+        {
+          message: error instanceof Error ? error.message : String(error),
+          campaignId: campaign.id,
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
       // No state change — will retry next polling cycle (D-08)
     }
@@ -182,7 +190,11 @@ export class FinalizationBot {
         await this.releasePledgesForCampaign(campaign);
       }
     } catch (error) {
-      console.error("Bot error in releaseSuccessfulPledges:", error);
+      console.error(`Bot error in releaseSuccessfulPledges:`, {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 
@@ -198,12 +210,18 @@ export class FinalizationBot {
           `Bot: Releasing pledge ${pledge.id} (amount: ${pledge.amount} shannons)`
         );
 
-        // Creator's lock script (standard secp256k1 blake160)
-        const creatorLockScript = {
-          codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-          hashType: "type" as const,
-          args: campaign.creator_lock_hash,
-        };
+        // Creator's lock script (use actual lock from database if available, otherwise fall back to standard secp256k1)
+        const creatorLockScript = campaign.creator_lock_code_hash
+          ? {
+              codeHash: campaign.creator_lock_code_hash,
+              hashType: (campaign.creator_lock_hash_type as "type" | "data" | "data1" | "data2" | null) || "type",
+              args: campaign.creator_lock_args || campaign.creator_lock_hash,
+            }
+          : {
+              codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+              hashType: "type" as const,
+              args: campaign.creator_lock_hash,
+            };
 
         const params = {
           pledgeOutPoint: {
@@ -227,7 +245,11 @@ export class FinalizationBot {
       } catch (error) {
         console.error(
           `Bot: Failed to release pledge ${pledge.id}:`,
-          error
+          {
+            message: error instanceof Error ? error.message : String(error),
+            pledgeId: pledge.id,
+            stack: error instanceof Error ? error.stack : undefined,
+          }
         );
         // No state change — will retry next polling cycle
       }
@@ -256,7 +278,11 @@ export class FinalizationBot {
         await this.refundPledgesForCampaign(campaign);
       }
     } catch (error) {
-      console.error("Bot error in refundFailedPledges:", error);
+      console.error(`Bot error in refundFailedPledges:`, {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 
@@ -272,12 +298,18 @@ export class FinalizationBot {
           `Bot: Refunding pledge ${pledge.id} (amount: ${pledge.amount} shannons)`
         );
 
-        // Backer's lock script (standard secp256k1 blake160)
-        const backerLockScript = {
-          codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-          hashType: "type" as const,
-          args: pledge.backer_lock_hash,
-        };
+        // Backer's lock script (use actual lock from database if available, otherwise fall back to standard secp256k1)
+        const backerLockScript = pledge.backer_lock_code_hash
+          ? {
+              codeHash: pledge.backer_lock_code_hash,
+              hashType: (pledge.backer_lock_hash_type as "type" | "data" | "data1" | "data2" | null) || "type",
+              args: pledge.backer_lock_args || pledge.backer_lock_hash,
+            }
+          : {
+              codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+              hashType: "type" as const,
+              args: pledge.backer_lock_hash,
+            };
 
         const params = {
           pledgeOutPoint: {
@@ -285,6 +317,10 @@ export class FinalizationBot {
             index: pledge.output_index,
           },
           pledgeCapacity: BigInt(pledge.amount),
+          campaignCellDep: {
+            txHash: campaign.tx_hash,
+            index: campaign.output_index,
+          },
           backerLockScript: backerLockScript,
           deadlineBlock: BigInt(campaign.deadline_block),
         };
@@ -297,7 +333,11 @@ export class FinalizationBot {
       } catch (error) {
         console.error(
           `Bot: Failed to refund pledge ${pledge.id}:`,
-          error
+          {
+            message: error instanceof Error ? error.message : String(error),
+            pledgeId: pledge.id,
+            stack: error instanceof Error ? error.stack : undefined,
+          }
         );
         // No state change — will retry next polling cycle
       }

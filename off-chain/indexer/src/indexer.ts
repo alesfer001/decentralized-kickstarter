@@ -268,7 +268,12 @@ export class CampaignIndexer {
               }
             }
           }
-        } catch {}
+        } catch (error) {
+          console.warn(
+            `Failed to fetch creator lock script for campaign ${outPointStr} (tx: ${lookupTxHash}):`,
+            error instanceof Error ? error.message : String(error)
+          );
+        }
 
         dbCampaigns.push({
           id: outPointStr,
@@ -300,12 +305,40 @@ export class CampaignIndexer {
         const data = parsePledgeData(cell.outputData);
         const blockNumber = await this.getBlockNumberForTx(cell.outPoint.txHash);
 
+        // Extract backer lock script by finding an output whose lock hash matches backerLockHash
+        let backerLock: { codeHash: string; hashType: string; args: string } | null = null;
+        try {
+          const txData = await this.client.getTransaction(cell.outPoint.txHash);
+          if (txData?.transaction) {
+            for (const output of txData.transaction.outputs) {
+              const script = ccc.Script.from(output.lock);
+              const lockHash = script.hash();
+              if (lockHash === data.backerLockHash) {
+                backerLock = {
+                  codeHash: script.codeHash,
+                  hashType: script.hashType,
+                  args: script.args,
+                };
+                break;
+              }
+            }
+          }
+        } catch (error) {
+          console.warn(
+            `Failed to fetch backer lock script for pledge ${outPointStr} (tx: ${cell.outPoint.txHash}):`,
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+
         dbPledges.push({
           id: outPointStr,
           tx_hash: cell.outPoint.txHash,
           output_index: Number(cell.outPoint.index),
           campaign_id: data.campaignId,
           backer_lock_hash: data.backerLockHash,
+          backer_lock_code_hash: backerLock?.codeHash || null,
+          backer_lock_hash_type: backerLock?.hashType || null,
+          backer_lock_args: backerLock?.args || null,
           amount: data.amount.toString(),
           created_at: blockNumber.toString(),
         });
