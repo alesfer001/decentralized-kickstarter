@@ -145,6 +145,20 @@ Start background polling (10-second cycle):
 
 **Rationale:** The TransactionBuilder is used by bot methods (finalizeCampaign, permissionlessRelease, permissionlessRefund) which need all contract information to build transactions correctly. Providing incomplete contract info would cause runtime errors.
 
+### Rule 3 Auto-fix: Remove accidentally committed transpiled files
+
+**Issue found during:** Post-Task 1 verification
+
+**What happened:** Task 1 commit included transpiled JavaScript files (builder.js, ckbClient.js, serializer.js, types.js) in off-chain/transaction-builder/src/. These are generated files that should not be tracked in git.
+
+**Fix applied:**
+- Removed transpiled .js files from git tracking via git rm --cached
+- Added `off-chain/transaction-builder/src/*.js` to .gitignore to prevent future commits of generated files
+
+**Files modified:** .gitignore, and removed 4 .js files from tracking
+
+**Rationale:** Generated files pollute the repository and cause merge conflicts. The .js files were created by an automatic tool (likely TypeScript compilation or a build process) and should be regenerated on demand, not committed. Adding them to .gitignore prevents accidental re-commits.
+
 ## Verification
 
 All acceptance criteria met:
@@ -176,6 +190,8 @@ All acceptance criteria met:
 |------|---------|-------|
 | 9bc0445 | feat(07-02): integrate finalization bot into indexer polling loop | off-chain/indexer/src/indexer.ts |
 | e350073 | feat(07-02): initialize bot in indexer entry point | off-chain/indexer/src/index.ts |
+| dc99982 | docs(07-02): complete finalization bot integration plan summary | .planning/phases/07-automatic-finalization-bot/07-02-SUMMARY.md |
+| c82b825 | chore(07-02): remove accidentally committed generated js files | .gitignore (4 .js files removed) |
 
 ## Known Stubs
 
