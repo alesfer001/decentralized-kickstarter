@@ -114,7 +114,7 @@ Plans:
 
 Plans:
 - [x] 07-01-PLAN.md — Create FinalizationBot class with finalization, release, and refund logic
-- [ ] 07-02-PLAN.md — Integrate bot into indexer polling loop and initialize with bot wallet
+- [x] 07-02-PLAN.md — Integrate bot into indexer polling loop and initialize with bot wallet
 
 **Success criteria:**
 1. FinalizationBot class created in bot.ts with processPendingFinalizations(), releaseSuccessfulPledges(), refundFailedPledges(), checkBotBalance() methods
