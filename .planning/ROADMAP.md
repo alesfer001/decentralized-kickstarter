@@ -113,7 +113,7 @@ Plans:
 **Plans:** 2 plans in 2 waves
 
 Plans:
-- [ ] 07-01-PLAN.md — Create FinalizationBot class with finalization, release, and refund logic
+- [x] 07-01-PLAN.md — Create FinalizationBot class with finalization, release, and refund logic
 - [ ] 07-02-PLAN.md — Integrate bot into indexer polling loop and initialize with bot wallet
 
 **Success criteria:**
