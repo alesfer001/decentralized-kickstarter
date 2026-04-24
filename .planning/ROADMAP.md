@@ -1,7 +1,7 @@
 # Roadmap: CKB Kickstarter v1.1
 
 ## Overview
-6 phases | 27 requirements | Coarse granularity
+7 phases | 33 requirements | Coarse granularity
 
 Core value: Backers' funds are automatically routed to the correct destination (creator on success, backer on failure) without anyone's cooperation — enforced entirely by on-chain scripts.
 
@@ -60,11 +60,11 @@ Plans:
 5. Backer count displays correctly on campaign listing cards, counting unique backers across pledges and receipts (BUG-05)
 
 ## Phase 5: Permissionless Finalization (Campaign Lock Script)
-**Goal:** Replace creator's secp256k1 lock on campaign cells with a custom campaign-lock script that allows anyone to finalize expired campaigns — unblocking Phase 16 (auto-finalization bot).
+**Goal:** Replace creator's secp256k1 lock on campaign cells with a custom campaign-lock script that allows anyone to finalize expired campaigns — unblocking Phase 7 (auto-finalization bot).
 **Requirements:** BUG-01
 **UI hint:** yes
 **Canonical refs:** docs/IMPLEMENTATION-NOTES.md, docs/ProjectPlan.md §Phase 15.5
-**Plans:** 3 plans (or more)
+**Plans:** 4 plans in 3 waves
 
 Plans:
 - [x] 05-01-PLAN.md — Campaign Lock Script Contract implementation (COMPLETED 2026-04-09)
@@ -105,19 +105,43 @@ Plans:
 7. Merge path documents timing limitation, validates lock args
 8. All 5 attack scenarios rejected on devnet, 3 happy path scenarios pass
 
+## Phase 7: Automatic Finalization Bot
+**Goal:** Build an automatic finalization bot that detects expired campaigns and submits finalization transactions, then triggers permissionless release/refund for all associated pledges. The bot runs inside the existing indexer process on Render as a scheduled routine on each 10-second polling cycle. No manual intervention needed after a campaign deadline passes.
+**Requirements:** BOT-01, BOT-02, BOT-03, BOT-04
+**UI hint:** no
+**Canonical refs:** .planning/phases/07-automatic-finalization-bot/07-CONTEXT.md, 07-RESEARCH.md
+**Plans:** 2 plans in 2 waves
+
+Plans:
+- [ ] 07-01-PLAN.md — Create FinalizationBot class with finalization, release, and refund logic
+- [ ] 07-02-PLAN.md — Integrate bot into indexer polling loop and initialize with bot wallet
+
+**Success criteria:**
+1. FinalizationBot class created in bot.ts with processPendingFinalizations(), releaseSuccessfulPledges(), refundFailedPledges(), checkBotBalance() methods
+2. Bot scans for expired campaigns (deadline passed, on-chain status Active) and submits finalization txs via TransactionBuilder
+3. Bot detects finalized campaigns and triggers permissionless release (success) or refund (failure) for all pledges
+4. Bot checks wallet balance each cycle and logs warning if below configurable threshold (default: 50 CKB)
+5. On tx failure, bot logs error and retries on next polling cycle (no backoff, no retry counter)
+6. Bot is integrated into indexer.ts polling loop and called after each indexAll() call
+7. Bot is initialized in index.ts with signer from BOT_PRIVATE_KEY env var
+8. If BOT_PRIVATE_KEY missing or initialization fails, bot is disabled but indexer continues running
+9. All logging via console.log/console.error to stdout (visible in Render logs dashboard)
+
 ## Requirement Coverage Validation
 
-All 27 v1.1 requirements are mapped:
+All 33 v1.1 + v1.1-bot requirements are mapped:
 
 | Phase | Requirements | Count |
 |-------|-------------|-------|
 | Phase 1 | LOCK-01, LOCK-02, LOCK-03, LOCK-04, RCPT-01, RCPT-02, RCPT-03, MERGE-02, CAMP-01, CAMP-02 | 10 |
 | Phase 2 | TXB-01, TXB-02, TXB-03, TXB-04, MERGE-01, IDX-01, IDX-02 | 7 |
 | Phase 3 | UI-01, UI-02, UI-03 | 3 |
-| Phase 5 | BUG-01 | 1 |
+| Phase 4 | BUG-01, BUG-02, BUG-03, BUG-04, BUG-05 | 5 |
+| Phase 5 | (covered by Phase 4 BUG-01) | 0 |
 | Phase 6 | SEC-01, SEC-02, SEC-03, SEC-04, SEC-05, SEC-06 | 6 |
-| **Total** | | **27** |
+| Phase 7 | BOT-01, BOT-02, BOT-03, BOT-04 | 4 |
+| **Total** | | **35** |
 
 ---
 
-*Created: 2026-03-26 | Granularity: coarse | Parallelization: enabled*
+*Created: 2026-03-26 | Last updated: 2026-04-24 | Granularity: coarse | Parallelization: enabled*
