@@ -4,8 +4,8 @@ import { CampaignIndexer } from "./indexer";
 import { IndexerAPI } from "./api";
 import { Database } from "./database";
 import { FinalizationBot } from "./bot";
-import { TransactionBuilder } from "../transaction-builder/src/builder";
-import { createCkbClient } from "../transaction-builder/src/ckbClient";
+import { TransactionBuilder } from "../../transaction-builder/src/builder";
+import { createCkbClient } from "../../transaction-builder/src/ckbClient";
 
 /**
  * Main entry point for the indexer service
@@ -82,43 +82,48 @@ async function main() {
       console.log("Initializing finalization bot...");
 
       // Create bot signer from private key
-      const botClient = createCkbClient("testnet", RPC_URL);
+      const network = (process.env.CKB_NETWORK || "devnet").toLowerCase();
+      const botClient = createCkbClient(network, RPC_URL);
       const botSigner = new ccc.SignerCkbPrivateKey(botClient, BOT_PRIVATE_KEY);
 
       // Get bot's address for logging
       const botAddress = await botSigner.getRecommendedAddress();
       console.log(`Bot address: ${botAddress}`);
 
+      // Hash type: "data2" on devnet (OffCKB), "data1" on testnet/mainnet
+      const hashType = (process.env.CONTRACT_HASH_TYPE || "data2") as "data" | "data1" | "data2" | "type";
+      const campaignLockHashType = (process.env.CAMPAIGN_LOCK_HASH_TYPE || hashType) as "data" | "data1" | "data2" | "type";
+
       // Create transaction builder for bot to use
       const botBuilder = new TransactionBuilder(
         botClient,
         {
           codeHash: CAMPAIGN_CODE_HASH,
-          hashType: "type",
+          hashType,
           txHash: CAMPAIGN_TX_HASH,
           index: 0,
         },
         {
           codeHash: CAMPAIGN_LOCK_CODE_HASH,
-          hashType: "data",
+          hashType: campaignLockHashType,
           txHash: CAMPAIGN_LOCK_TX_HASH,
           index: 0,
         },
         {
           codeHash: PLEDGE_CODE_HASH,
-          hashType: "type",
+          hashType,
           txHash: PLEDGE_TX_HASH,
           index: 0,
         },
         {
           codeHash: PLEDGE_LOCK_CODE_HASH,
-          hashType: "type",
+          hashType,
           txHash: PLEDGE_LOCK_TX_HASH,
           index: 0,
         },
         {
           codeHash: RECEIPT_CODE_HASH,
-          hashType: "type",
+          hashType,
           txHash: RECEIPT_TX_HASH,
           index: 0,
         }

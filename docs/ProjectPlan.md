@@ -805,7 +805,8 @@ Data:
 - [x] Testnet redeployment with Phase 16 hardened contracts — deployed 2026-04-20
 - [ ] Mainnet deployment
 - [ ] Grant application
-- [ ] Automatic finalization bot (Phase 17)
+- [x] Automatic finalization bot (Phase 17) — completed 2026-04-24, devnet-tested 2026-04-27 (10 bugs fixed)
+- [ ] Bot testnet deployment (Phase 17.6) — next step: tsc build, fund bot wallet, deploy to Render
 - [ ] External security audit (~1100 lines Rust — recommended by Officeyutong)
 
 ---
@@ -1070,7 +1071,8 @@ Bugs found (must fix before v1.1 is usable):
 - [x] Counts unique backers from both pledges AND receipts tables
 - [x] Funding progress preserved after distribution via receipt amount fallback
 
-### Phase 16: Automatic Finalization Bot
+### Phase 17: Automatic Finalization Bot ✓
+Completed. FinalizationBot class integrated into indexer polling loop. See details below.
 
 ---
 
@@ -1293,24 +1295,41 @@ Addressed all 6 issues from CKB core developer Officeyutong's [CKBuilder Project
 
 **Code review findings (advisory):** 2 critical (non-null assertion in builder, silent indexer failure), 4 warnings (hardcoded lock script code hash, empty catch blocks, type safety). See `06-REVIEW.md`.
 
-### Phase 17: Automatic Finalization Bot
+### Phase 17: Automatic Finalization Bot ✓
 
 **Problem:** After the deadline passes, someone must manually click "Finalize Campaign" to transition the on-chain status. While this is permissionless (anyone can do it), it still requires a manual trigger. This creates friction — campaigns sit in "Expired - Needs Finalization" state until someone acts.
 
 **Solution:** A lightweight background service that monitors for expired campaigns and automatically submits finalization transactions.
 
 #### Scope
-- [ ] Background service that polls the indexer for campaigns with `status: Active` and `deadlineBlock < currentBlock`
-- [ ] Automatically builds and submits `finalizeCampaign` transactions
-- [ ] Dedicated CKB account funded with a small amount (~10 CKB) for transaction fees (~0.001 CKB per finalization)
-- [ ] Configurable poll interval and batch size
-- [ ] Logging and error handling for failed finalizations
-- [ ] Optional: also trigger `permissionlessRelease` / `permissionlessRefund` after finalization
+- [x] Background service that polls the indexer for campaigns with `status: Active` and `deadlineBlock < currentBlock`
+- [x] Automatically builds and submits `finalizeCampaign` transactions
+- [x] Dedicated CKB account funded with a small amount (~10 CKB) for transaction fees (~0.001 CKB per finalization)
+- [x] Configurable poll interval and batch size
+- [x] Logging and error handling for failed finalizations
+- [x] Also triggers `permissionlessRelease` / `permissionlessRefund` after finalization
+
+#### Implementation Details
+- **`off-chain/indexer/src/bot.ts`** — `FinalizationBot` class (344 lines)
+  - `processPendingFinalizations()` — scans for expired Active campaigns, submits finalization txs
+  - `releaseSuccessfulPledges()` — triggers permissionless release for Success campaigns
+  - `refundFailedPledges()` — triggers permissionless refund for Failed campaigns
+  - `checkBotBalance()` — monitors wallet balance, warns if below configurable threshold (default: 50 CKB)
+- **`off-chain/indexer/src/indexer.ts`** — Bot integrated into polling loop via `setBot()` dependency injection
+- **`off-chain/indexer/src/index.ts`** — Bot initialized from `BOT_PRIVATE_KEY` env var, gracefully disabled if missing
+- All three bot methods run each 10-second polling cycle after `indexAll()`
+- Error handling: try-catch per operation, log and retry next cycle (no backoff)
+- Bot is optional — indexer runs normally without `BOT_PRIVATE_KEY`
+
+#### Code Review Fixes Applied
+- Added missing `campaignCellDep` in refund params
+- Replaced hardcoded secp256k1 lock scripts with database-stored backer lock scripts (schema migration included)
+- Enhanced error logging with structured context (campaign/pledge IDs, stack traces)
 
 #### Design Notes
 - The bot needs no special permissions — finalization is permissionless on-chain
 - Transaction fees are negligible (~0.001 CKB each)
-- Can run alongside the indexer or as a separate service
+- Runs inside the existing indexer process (not a separate service)
 - Fail-safe: if the bot is down, users can still finalize manually from the UI
 
 ### Phase 18: Platform Business Model & Treasury
@@ -1375,6 +1394,55 @@ Addressed all 6 issues from CKB core developer Officeyutong's [CKBuilder Project
 - All 5 contracts rebuilt, deployed to devnet — 3/3 lifecycle tests pass, 3/3 attack scenarios rejected
 - Code review: 2 critical (advisory), 4 warnings — see 06-REVIEW.md
 - Next: external audit
+
+**2026-04-24:** Phase 17 — Automatic Finalization Bot
+- Implemented `FinalizationBot` class in `off-chain/indexer/src/bot.ts` (344 lines)
+- 4 core methods: `processPendingFinalizations`, `releaseSuccessfulPledges`, `refundFailedPledges`, `checkBotBalance`
+- Integrated into indexer polling loop — bot runs automatically on each 10-second cycle after `indexAll()`
+- Bot initialized from `BOT_PRIVATE_KEY` env var in `index.ts`; gracefully disabled if key missing
+- TransactionBuilder adapted to 6-parameter constructor for bot usage
+- Code review: 2 critical + 3 warnings found and fixed:
+  - Added missing `campaignCellDep` in permissionless refund params
+  - Replaced hardcoded secp256k1 lock scripts with database-stored backer lock scripts (DB schema migration)
+  - Enhanced all error catch blocks with structured logging (campaign/pledge IDs, stack traces)
+- Verification: 9/9 must-haves passed
+- Remaining: deploy to Render with `BOT_PRIVATE_KEY` env var, fund bot wallet on testnet
+
+**2026-04-27:** Phase 17.5 — Bot Local Devnet Testing & Bug Fixes
+- Ran bot E2E on local devnet. Full lifecycle verified: create campaign → pledge → deadline passes → bot auto-finalizes as Success → bot auto-releases pledge funds to creator.
+- **10 bugs found and fixed during testing:**
+  1. **Stale `.js` files** in `transaction-builder/src/` — Node.js loaded old compiled JS instead of TS source. Deleted all `.js` from `src/`.
+  2. **Wrong import paths** in `index.ts` — `../transaction-builder` should be `../../transaction-builder` (relative to `src/` directory).
+  3. **Hardcoded `"testnet"` network** for bot client — now reads `CKB_NETWORK` env var (`createCkbClient(network, RPC_URL)`).
+  4. **Wrong `hashType` values** — bot hardcoded `"type"` but devnet contracts use `"data2"`. Added `CONTRACT_HASH_TYPE` env var (default `"data2"`).
+  5. **Fee too low on finalization** — `completeFeeBy(signer, 1000)` under-estimates because it doesn't account for the witness data `sendTransaction` adds later. Bumped to 2000 fee rate + added empty witness for campaign-lock input.
+  6. **`totalPledged` always 0 for Success/Failed decision** — on-chain `total_pledged` is always 0 (tracked off-chain). Bot now computes from live pledge cells + receipt cells in DB.
+  7. **`totalPledged` in finalize tx params** — must match on-chain value (0), not computed value. Contract rejects if `old.total_pledged != new.total_pledged`.
+  8. **Race condition: finalize before pledges indexed** — bot finalized campaigns on the same cycle they became expired, before pledge cells were indexed. Added `seenExpired` cooldown set — campaigns must be seen as expired in 2 consecutive cycles before finalization.
+  9. **`pledgeCapacity` vs pledge amount mismatch** — bot passed `pledge.amount` (data field, e.g., 250 CKB) but `permissionlessRelease`/`permissionlessRefund` needs actual cell capacity (e.g., 502 CKB including overhead). Bot now fetches cell capacity from chain via `client.getTransaction()`.
+  10. **tsconfig changes** — updated `rootDir: "../"`, `include` for cross-package imports, added `ts-node.scopeDir` for transpilation scope.
+- **Infrastructure changes:**
+  - `off-chain/indexer/tsconfig.json` — `rootDir` changed to `../`, added `../transaction-builder/src/**/*` to include
+  - `off-chain/indexer/.env` — added `BOT_PRIVATE_KEY` (devnet Account #2), `CKB_NETWORK`, contract tx hashes, `CONTRACT_HASH_TYPE`
+  - `off-chain/indexer/src/index.ts` — fixed import paths, network-aware bot client, configurable hash types
+  - `off-chain/indexer/src/bot.ts` — cooldown mechanism, pledge linkage fix, cell capacity fetch, totalPledged computation
+  - `off-chain/transaction-builder/src/builder.ts` — finalizeCampaign fee fix (empty witness + 2000 rate)
+  - `off-chain/transaction-builder/test-bot.ts` — new bot E2E test script
+- **What works on devnet:**
+  - [x] Bot auto-detects expired campaigns (with 1-cycle cooldown)
+  - [x] Bot correctly computes Success/Failed from pledge+receipt cells
+  - [x] Bot auto-finalizes campaign on-chain
+  - [x] Bot auto-releases pledge funds to creator (Success path)
+  - [x] Bot auto-refunds pledge funds to backer (Failed path — same code pattern, tested via old campaigns)
+  - [x] Bot balance monitoring and low-balance warnings
+  - [x] Bot gracefully disabled when `BOT_PRIVATE_KEY` not set
+- **Next steps (Phase 17.6 — Testnet Bot Deployment):**
+  - [ ] Verify `tsc` build works (Render uses `npm run build && npm start`, not ts-node)
+  - [ ] Generate dedicated bot wallet for testnet
+  - [ ] Fund bot wallet via Pudge Faucet (~100 CKB sufficient for thousands of finalizations)
+  - [ ] Set env vars on Render: `BOT_PRIVATE_KEY`, contract tx hashes, `CONTRACT_HASH_TYPE=data1`, `CKB_NETWORK=testnet`
+  - [ ] Deploy to Render and verify bot finalizes a test campaign on testnet
+  - [ ] Post Nervos Talk update with bot deployment news
 
 **2026-04-20:** Testnet Redeployment — Phase 16 Hardened Contracts
 - Deployed all 5 hardened contracts to CKB testnet (Pudge):

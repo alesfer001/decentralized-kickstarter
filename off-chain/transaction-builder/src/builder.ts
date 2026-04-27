@@ -284,8 +284,13 @@ export class TransactionBuilder {
       ],
     });
 
-    // Complete fee (may add more inputs for fee)
-    await tx.completeFeeBy(signer, 1000);
+    // Add empty witness for the campaign cell input (custom lock, no signature needed)
+    tx.witnesses.push("0x");
+
+    // completeFeeBy adds a signer input for the fee but under-estimates the tx size
+    // because it doesn't account for the witness that sendTransaction will add for
+    // the signer's secp256k1 lock. Use a higher fee rate (2x) to compensate.
+    await tx.completeFeeBy(signer, 2000);
 
     console.log("Signing finalize transaction...");
     const txHash = await signer.sendTransaction(tx);

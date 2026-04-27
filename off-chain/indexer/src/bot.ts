@@ -38,6 +38,9 @@ export class FinalizationBot {
   private builder: ITransactionBuilder;
   private config: BotConfig;
   private rpcUrl: string;
+  // Track campaigns seen as expired — only finalize after seeing them in 2+ cycles
+  // to ensure pledges have been indexed before deciding Success/Failed
+  private seenExpired: Set<string> = new Set();
 
   constructor(
     client: ccc.Client,
@@ -53,6 +56,25 @@ export class FinalizationBot {
     this.builder = builder;
     this.config = config;
     this.rpcUrl = rpcUrl;
+  }
+
+  /**
+   * Get the tx hash used to link pledges/receipts to a campaign.
+   * In v1.1, pledge campaign_id is the type script hash which matches via the
+   * campaign's original creation tx hash (before finalization changes the outpoint).
+   */
+  private getLinkageHash(campaign: DBCampaign): string {
+    return (campaign.original_tx_hash || campaign.tx_hash).toLowerCase();
+  }
+
+  /**
+   * Get pledges for a campaign using proper linkage (type script hash matching).
+   */
+  private getPledgesForCampaign(campaign: DBCampaign): DBPledge[] {
+    const linkageHash = this.getLinkageHash(campaign);
+    return this.db.getAllPledges().filter(
+      (p) => p.campaign_id.toLowerCase() === linkageHash
+    );
   }
 
   /**
@@ -98,20 +120,33 @@ export class FinalizationBot {
    */
   private findExpiredCampaigns(currentBlock: bigint): DBCampaign[] {
     const allCampaigns = this.db.getAllCampaigns();
-    return allCampaigns.filter((campaign) => {
-      // Only finalize campaigns that are still Active on-chain
-      if (campaign.status !== CampaignStatus.Active) {
-        return false;
+    const ready: DBCampaign[] = [];
+
+    for (const campaign of allCampaigns) {
+      if (campaign.status !== CampaignStatus.Active) continue;
+      if (BigInt(campaign.deadline_block) > currentBlock) continue;
+
+      // Cooldown: first time we see an expired campaign, mark it but don't finalize yet.
+      // This gives the indexer one full cycle to index any pledges/receipts before
+      // we decide Success vs Failed.
+      if (!this.seenExpired.has(campaign.id)) {
+        this.seenExpired.add(campaign.id);
+        console.log(`Bot: Campaign ${campaign.id} expired — waiting one cycle for pledge indexing`);
+        continue;
       }
 
-      // Check if deadline has passed
-      const deadlineBlock = BigInt(campaign.deadline_block);
-      if (deadlineBlock > currentBlock) {
-        return false;
-      }
+      ready.push(campaign);
+    }
 
-      return true;
-    });
+    // Clean up: remove campaigns that are no longer Active (already finalized)
+    for (const id of this.seenExpired) {
+      const c = allCampaigns.find((c) => c.id === id);
+      if (!c || c.status !== CampaignStatus.Active) {
+        this.seenExpired.delete(id);
+      }
+    }
+
+    return ready;
   }
 
   /**
@@ -119,9 +154,20 @@ export class FinalizationBot {
    */
   private async finalizeSingleCampaign(campaign: DBCampaign): Promise<void> {
     try {
-      // Determine outcome: Success if total_pledged >= funding_goal, else Failed
-      const totalPledged = BigInt(campaign.total_pledged);
+      // Determine outcome: total_pledged on-chain is always 0 — compute from pledge cells + receipts
+      const linkageHash = this.getLinkageHash(campaign);
+      const pledges = this.getPledgesForCampaign(campaign);
+      const receipts = this.db.getReceiptsForCampaign(linkageHash);
+      const pledgeTotal = pledges.reduce((sum, p) => sum + BigInt(p.amount), 0n);
+      const receiptTotal = receipts.reduce((sum, r) => sum + BigInt(r.pledge_amount), 0n);
+      const totalPledged = pledgeTotal > receiptTotal ? pledgeTotal : receiptTotal;
       const fundingGoal = BigInt(campaign.funding_goal);
+
+      console.log(
+        `Bot: Campaign ${campaign.id} — pledges: ${pledges.length}, receipts: ${receipts.length}, ` +
+        `totalPledged: ${totalPledged}, goal: ${fundingGoal}`
+      );
+
       const newStatus =
         totalPledged >= fundingGoal
           ? CampaignStatus.Success
@@ -141,7 +187,7 @@ export class FinalizationBot {
           creatorLockHash: campaign.creator_lock_hash,
           fundingGoal: fundingGoal,
           deadlineBlock: BigInt(campaign.deadline_block),
-          totalPledged: totalPledged,
+          totalPledged: BigInt(campaign.total_pledged), // must match on-chain value (always 0)
           title: campaign.title || undefined,
           description: campaign.description || undefined,
         },
@@ -202,7 +248,7 @@ export class FinalizationBot {
    * Release pledges for a single successful campaign.
    */
   private async releasePledgesForCampaign(campaign: DBCampaign): Promise<void> {
-    const pledges = this.db.getPledgesForCampaign(campaign.tx_hash);
+    const pledges = this.getPledgesForCampaign(campaign);
 
     for (const pledge of pledges) {
       try {
@@ -223,12 +269,17 @@ export class FinalizationBot {
               args: campaign.creator_lock_hash,
             };
 
+        // Fetch actual cell capacity from chain (pledge.amount is the data amount, not cell capacity)
+        const pledgeTx = await this.client.getTransaction(pledge.tx_hash);
+        const pledgeOutput = pledgeTx!.transaction!.outputs[pledge.output_index];
+        const pledgeCapacity = BigInt(pledgeOutput.capacity);
+
         const params = {
           pledgeOutPoint: {
             txHash: pledge.tx_hash,
             index: pledge.output_index,
           },
-          pledgeCapacity: BigInt(pledge.amount),
+          pledgeCapacity,
           campaignCellDep: {
             txHash: campaign.tx_hash,
             index: campaign.output_index,
@@ -290,7 +341,7 @@ export class FinalizationBot {
    * Refund pledges for a single failed campaign.
    */
   private async refundPledgesForCampaign(campaign: DBCampaign): Promise<void> {
-    const pledges = this.db.getPledgesForCampaign(campaign.tx_hash);
+    const pledges = this.getPledgesForCampaign(campaign);
 
     for (const pledge of pledges) {
       try {
@@ -311,12 +362,17 @@ export class FinalizationBot {
               args: pledge.backer_lock_hash,
             };
 
+        // Fetch actual cell capacity from chain (pledge.amount is the data amount, not cell capacity)
+        const pledgeTx = await this.client.getTransaction(pledge.tx_hash);
+        const pledgeOutput = pledgeTx!.transaction!.outputs[pledge.output_index];
+        const pledgeCapacity = BigInt(pledgeOutput.capacity);
+
         const params = {
           pledgeOutPoint: {
             txHash: pledge.tx_hash,
             index: pledge.output_index,
           },
-          pledgeCapacity: BigInt(pledge.amount),
+          pledgeCapacity,
           campaignCellDep: {
             txHash: campaign.tx_hash,
             index: campaign.output_index,
