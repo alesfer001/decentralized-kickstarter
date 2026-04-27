@@ -1436,12 +1436,16 @@ Addressed all 6 issues from CKB core developer Officeyutong's [CKBuilder Project
   - [x] Bot auto-refunds pledge funds to backer (Failed path — same code pattern, tested via old campaigns)
   - [x] Bot balance monitoring and low-balance warnings
   - [x] Bot gracefully disabled when `BOT_PRIVATE_KEY` not set
-- **Next steps (Phase 17.6 — Testnet Bot Deployment):**
-  - [ ] Verify `tsc` build works (Render uses `npm run build && npm start`, not ts-node)
-  - [ ] Generate dedicated bot wallet for testnet
-  - [ ] Fund bot wallet via Pudge Faucet (~100 CKB sufficient for thousands of finalizations)
-  - [ ] Set env vars on Render: `BOT_PRIVATE_KEY`, contract tx hashes, `CONTRACT_HASH_TYPE=data1`, `CKB_NETWORK=testnet`
-  - [ ] Deploy to Render and verify bot finalizes a test campaign on testnet
+- **Phase 17.6 — Testnet Bot Deployment (completed 2026-04-27):**
+  - [x] Verify `tsc` build works — fixed `package.json` start path to `dist/indexer/src/index.js` (rootDir nests output)
+  - [x] Fixed `CKB_NETWORK` type cast for strict TypeScript compilation
+  - [x] Generate dedicated bot wallet for testnet — `ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsq0c7jfup93h8wld6za5jm9ksfj9e8u968q8zmd8m`
+  - [x] Fund bot wallet — 100,000 CKB via Pudge Faucet
+  - [x] Env vars already configured on Render: `BOT_PRIVATE_KEY`, `CKB_NETWORK=testnet`, `CONTRACT_HASH_TYPE=data1`, `CAMPAIGN_LOCK_HASH_TYPE=data`, all code hashes
+  - [x] Fixed Render build: updated build command to `npm install && cd ../transaction-builder && npm install && cd ../indexer && npm run build` (tsc compiles cross-package sources that need `@ckb-ccc/core`)
+  - [x] Deployed to Render — bot initialized successfully, connected to CKB testnet block 20906079
+  - [x] Bot logs confirm: address matches, injected into indexer, polling every 10s
+  - [ ] E2E testnet verification: create test campaigns (Success + Failed paths), confirm bot auto-finalizes and distributes
   - [ ] Post Nervos Talk update with bot deployment news
 
 **2026-04-20:** Testnet Redeployment — Phase 16 Hardened Contracts
