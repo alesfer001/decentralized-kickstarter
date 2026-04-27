@@ -82,7 +82,7 @@ async function main() {
       console.log("Initializing finalization bot...");
 
       // Create bot signer from private key
-      const network = (process.env.CKB_NETWORK || "devnet").toLowerCase();
+      const network = (process.env.CKB_NETWORK || "devnet").toLowerCase() as "devnet" | "testnet" | "mainnet";
       const botClient = createCkbClient(network, RPC_URL);
       const botSigner = new ccc.SignerCkbPrivateKey(botClient, BOT_PRIVATE_KEY);
 
