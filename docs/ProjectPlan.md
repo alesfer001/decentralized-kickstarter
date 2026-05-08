@@ -1445,8 +1445,23 @@ Addressed all 6 issues from CKB core developer Officeyutong's [CKBuilder Project
   - [x] Fixed Render build: updated build command to `npm install && cd ../transaction-builder && npm install && cd ../indexer && npm run build` (tsc compiles cross-package sources that need `@ckb-ccc/core`)
   - [x] Deployed to Render — bot initialized successfully, connected to CKB testnet block 20906079
   - [x] Bot logs confirm: address matches, injected into indexer, polling every 10s
-  - [ ] E2E testnet verification: create test campaigns (Success + Failed paths), confirm bot auto-finalizes and distributes
-  - [ ] Post Nervos Talk update with bot deployment news
+  - [x] **E2E testnet verification (completed 2026-04-27):** all four bot operations confirmed end-to-end
+    - Bug found: `CONTRACT_HASH_TYPE=data1` and `CAMPAIGN_LOCK_HASH_TYPE=data` on Render didn't match on-chain cells (which use `data2`). Caused TypeID validation error 12 on every finalize attempt. Fixed by updating both env vars to `data2` and redeploying.
+    - Success path: created 200 CKB goal campaign, pledged 250 CKB → bot auto-finalized as Success and auto-released pledge to creator (release tx `0x564c6d7a...`)
+    - Failed path: created 10,000 CKB goal campaign, pledged 100 CKB → bot auto-finalized as Failed and auto-refunded pledge to backer (refund tx `0x54fd7e40...`)
+    - Zero-pledge edge case: a campaign created with deadline-in-the-past (~33 blocks of sign latency consumed buffer) was auto-finalized by bot as Failed with no pledges to refund — confirming bot tolerates this case
+    - Bugs found during E2E (addressed in Phase 17.7): frontend pledge cost estimator overshoot, JoyID UTXO cache staleness UX, bot duplicate-tx error spam
+  - [x] Post Nervos Talk update with bot deployment news (posted 2026-04-28)
+
+### Phase 17.7 — Deferred Bug Fixes from E2E Verification ✓ (completed 2026-05-08)
+
+- [x] **BUG: Frontend pledge cost estimator overshoot** — Cost breakdown UI overshot actual wallet deduction by ~30% (e.g. shows 716 CKB but JoyID deducts 550 CKB for 250 CKB pledge). Root cause was a combination of using a 65-byte lock placeholder (real pledge-lock is 105 bytes) and adding the receipt cell to the user-facing total when it's actually owned by the backer. Fix: `pledgeCellCapacity = (8+72+65+105)*1.2 + pledgeAmount`, total = pledgeCellCapacity + fee (no receipt). Verified on-chain (devnet block 24807, tx `0x0e918b49...`): for 200 CKB pledge, displayed 500 CKB matches actual wallet deduction exactly.
+- [x] **BUG: JoyID stale-UTXO error UX** — Rapid back-to-back pledges produced raw `TransactionFailedToResolve / Unknown(OutPoint(...))` errors because JoyID's input-cell cache hadn't refreshed. Fix: added `isJoyIDStaleUTXOError()` detector + `sendTransactionWithAutoRetry()` wrapper in `campaigns/[id]/page.tsx`. On detection: 2s delay + retry once. On retry failure: friendly toast "Wallet cells are still syncing — please refresh the page and retry". Code-verified; runtime race didn't naturally trigger during testnet retest (JoyID cache had refreshed by the time the second click landed) — fix remains as a safety net.
+- [x] **BUG: Bot duplicate-tx error spam** — Bot resubmitted the same release/refund tx every 10s polling cycle until inclusion, producing `PoolRejectedDuplicatedTransaction` log noise. Fix: `inFlightTxs` Map<pledgeId, txHash> in `FinalizationBot`, populated on submit and cleaned up when pledge cell disappears from indexer DB. Verified on devnet test-bot run: 0 duplicate-tx errors logged, "in-flight, skipping resubmission" messages appear during the in-mempool window as expected.
+
+**Bonus fix:** `/health` → `/status` indexer probe — ad-blocker extensions (uBlock Origin, AdGuard, Privacy Badger) commonly denylist `/health` as a tracking endpoint, causing "Indexer Offline" for users with adblockers even when the backend is fine. Added `/status` endpoint to indexer (mirrors `/health`, kept for ops monitoring) and switched frontend `checkHealth()` to probe `/status`. Confirmed live on production: indexer shows "Online" with adblocker enabled.
+
+**Quick task references:** `.planning/quick/260508-goe-*` (bot duplicate-tx), `.planning/quick/260508-gs6-*` (JoyID UX), `.planning/quick/260508-gwd-*` (estimator overshoot).
 
 **2026-04-20:** Testnet Redeployment — Phase 16 Hardened Contracts
 - Deployed all 5 hardened contracts to CKB testnet (Pudge):
