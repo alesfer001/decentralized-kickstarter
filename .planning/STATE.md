@@ -5,7 +5,7 @@ milestone_name: Bug Fixes
 current_plan: Not started
 status: Milestone complete
 stopped_at: Phase 7 context gathered
-last_updated: "2026-04-24T12:34:47.771Z"
+last_updated: "2026-05-08T10:00:28.490Z"
 progress:
   total_phases: 7
   completed_phases: 5
@@ -91,3 +91,13 @@ Core value: Backers' funds are automatically routed to the correct destination (
 - **D-P6-05:** Partial refund cross-checks amount difference with destroyed receipt
 - **D-P6-06:** Campaign finalization enforces since >= deadline_block (defense in depth)
 - **D-P6-07:** Reserved bytes and metadata checked during finalization
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260508-goe | Fix bot duplicate-tx error spam — track in-flight release/refund tx hashes in FinalizationBot | 2026-05-08 | e8929d5 | [260508-goe-fix-bot-duplicate-tx-error-spam-track-in](./quick/260508-goe-fix-bot-duplicate-tx-error-spam-track-in/) |
+
+### Last activity
+
+Last activity: 2026-05-08 - Completed quick task 260508-goe: Fix bot duplicate-tx error spam
