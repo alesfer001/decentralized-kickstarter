@@ -41,6 +41,10 @@ export class FinalizationBot {
   // Track campaigns seen as expired — only finalize after seeing them in 2+ cycles
   // to ensure pledges have been indexed before deciding Success/Failed
   private seenExpired: Set<string> = new Set();
+  // Track pledges with submitted release/refund txs — avoid re-submitting same tx on each poll cycle
+  // Keyed by pledgeId, value is submitted tx hash
+  // Cleared when pledge cell disappears from database
+  private inFlightTxs: Map<string, string> = new Map();
 
   constructor(
     client: ccc.Client,
@@ -104,6 +108,9 @@ export class FinalizationBot {
 
       // After finalization, process pledges for release/refund in subsequent cycles
       // This happens naturally as the polling loop continues (D-04)
+
+      // Clean up in-flight tx tracking for pledges that no longer exist
+      this.cleanupInFlightTxs();
     } catch (error) {
       console.error(`Bot error in processPendingFinalizations:`, {
         message: error instanceof Error ? error.message : String(error),
@@ -251,6 +258,12 @@ export class FinalizationBot {
     const pledges = this.getPledgesForCampaign(campaign);
 
     for (const pledge of pledges) {
+      // Skip if this pledge already has a release tx in-flight
+      if (this.inFlightTxs.has(pledge.id)) {
+        console.log(`Bot: Pledge ${pledge.id} in-flight, skipping resubmission`);
+        continue;
+      }
+
       try {
         console.log(
           `Bot: Releasing pledge ${pledge.id} (amount: ${pledge.amount} shannons)`
@@ -292,6 +305,7 @@ export class FinalizationBot {
           this.signer,
           params
         );
+        this.inFlightTxs.set(pledge.id, txHash);
         console.log(`Bot: Released pledge ${pledge.id}: ${txHash}`);
       } catch (error) {
         console.error(
@@ -344,6 +358,12 @@ export class FinalizationBot {
     const pledges = this.getPledgesForCampaign(campaign);
 
     for (const pledge of pledges) {
+      // Skip if this pledge already has a refund tx in-flight
+      if (this.inFlightTxs.has(pledge.id)) {
+        console.log(`Bot: Pledge ${pledge.id} in-flight, skipping resubmission`);
+        continue;
+      }
+
       try {
         console.log(
           `Bot: Refunding pledge ${pledge.id} (amount: ${pledge.amount} shannons)`
@@ -385,6 +405,7 @@ export class FinalizationBot {
           this.signer,
           params
         );
+        this.inFlightTxs.set(pledge.id, txHash);
         console.log(`Bot: Refunded pledge ${pledge.id}: ${txHash}`);
       } catch (error) {
         console.error(
@@ -396,6 +417,22 @@ export class FinalizationBot {
           }
         );
         // No state change — will retry next polling cycle
+      }
+    }
+  }
+
+  /**
+   * Clean up in-flight tx tracking for pledges that no longer exist in the database.
+   * Called once per polling cycle after pledge queries.
+   */
+  private cleanupInFlightTxs(): void {
+    const allPledges = this.db.getAllPledges();
+    const livePledgeIds = new Set(allPledges.map((p) => p.id));
+
+    for (const pledgeId of this.inFlightTxs.keys()) {
+      if (!livePledgeIds.has(pledgeId)) {
+        this.inFlightTxs.delete(pledgeId);
+        console.log(`Bot: Cleared in-flight tx for pledge ${pledgeId} (cell no longer exists)`);
       }
     }
   }
