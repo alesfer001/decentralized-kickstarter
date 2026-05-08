@@ -98,12 +98,9 @@ export async function fetchBlockNumber(): Promise<bigint> {
   return BigInt(data.blockNumber);
 }
 
-/**
- * Check API health
- */
 export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await apiFetch(`${API_BASE}/health`);
+    const res = await apiFetch(`${API_BASE}/status`);
     return res.ok;
   } catch {
     return false;

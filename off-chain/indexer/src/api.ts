@@ -26,8 +26,13 @@ export class IndexerAPI {
   }
 
   private setupRoutes() {
-    // Health check
+    // Health check (kept for ops/monitoring)
     this.app.get("/health", (req, res) => {
+      res.json({ status: "ok", timestamp: Date.now() });
+    });
+
+    // Status — same as /health but with a name ad-blockers don't denylist
+    this.app.get("/status", (req, res) => {
       res.json({ status: "ok", timestamp: Date.now() });
     });
 
