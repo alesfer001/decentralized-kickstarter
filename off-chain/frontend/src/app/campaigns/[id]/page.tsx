@@ -898,10 +898,6 @@ export default function CampaignDetailPage() {
                       return (
                         <div className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
                           <div className="flex justify-between">
-                            <span>Pledge amount:</span>
-                            <span className="font-medium">{formatCost(breakdown.pledgeAmount)} CKB</span>
-                          </div>
-                          <div className="flex justify-between">
                             <span>Pledge cell capacity:</span>
                             <span className="font-medium">{formatCost(breakdown.pledgeCellCapacity)} CKB</span>
                           </div>

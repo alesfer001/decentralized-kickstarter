@@ -248,11 +248,10 @@ export function getDistributionTriggerState(
 
 /**
  * Cost breakdown for pledge creation
- * Pledge amount + pledge cell capacity + receipt cell capacity + estimated fee
+ * Pledge cell capacity + receipt cell capacity + estimated fee
  * Values returned in shannons (1 CKB = 100,000,000 shannons)
  */
 export interface CostBreakdown {
-  pledgeAmount: bigint;
   pledgeCellCapacity: bigint;
   receiptCellCapacity: bigint;
   estimatedFee: bigint;
@@ -261,17 +260,19 @@ export interface CostBreakdown {
 
 /**
  * Calculate cost breakdown for pledge creation
- * Pledge amount + pledge cell capacity + receipt cell capacity + estimated fee
+ * Pledge cell capacity + receipt cell capacity + estimated fee
  * Values returned in shannons (1 CKB = 100,000,000 shannons)
+ *
+ * Note: pledge cell capacity includes the overhead for storing the pledge amount;
+ * we do NOT add the pledge amount again (that was a double-count bug).
+ * The actual user cost = pledgeAmount + pledgeCellCapacity + receiptCellCapacity + fee.
  */
 export function calculateCostBreakdown(pledgeAmountCkb: number | string): CostBreakdown {
-  // Convert input CKB to shannons
-  const pledgeAmount = BigInt(Math.floor(Number(pledgeAmountCkb) * 100000000));
-
-  // Constants matching transaction builder (serializer.ts calculateCellCapacity)
-  // pledgeBaseCapacity = calculateCellCapacity(72, true, 65)
-  // formula: max(ceil((8+72+65+65)*1.2), 61) * 1e8
-  const PLEDGE_CELL_CAPACITY = BigInt(Math.max(Math.ceil((8 + 72 + 65 + 65) * 1.2), 61)) * BigInt(100000000);
+  // Constants matching transaction builder (builder.ts createPledgeWithReceipt lines 480-485)
+  // pledgeBaseCapacity = calculateCellCapacity(72, true, 105)
+  // formula: max(ceil((8+72+65+105)*1.2), 61) * 1e8
+  // The 105 comes from pledge-lock args: code_hash(32) + hash_type(1) + args(72) = 105 bytes
+  const PLEDGE_CELL_CAPACITY = BigInt(Math.max(Math.ceil((8 + 72 + 65 + 105) * 1.2), 61)) * BigInt(100000000);
 
   // receiptCapacity = calculateCellCapacity(40, true, 65)
   // formula: max(ceil((8+40+65+65)*1.2), 61) * 1e8
@@ -280,10 +281,10 @@ export function calculateCostBreakdown(pledgeAmountCkb: number | string): CostBr
   // Estimated fee (conservative: ~1 KB transaction at 1000 shannons/KB)
   const ESTIMATED_FEE = BigInt(1000);
 
-  const totalCost = pledgeAmount + PLEDGE_CELL_CAPACITY + RECEIPT_CELL_CAPACITY + ESTIMATED_FEE;
+  // Total cost = cell capacities + fee (no separate pledge amount; it's inside pledgeCellCapacity)
+  const totalCost = PLEDGE_CELL_CAPACITY + RECEIPT_CELL_CAPACITY + ESTIMATED_FEE;
 
   return {
-    pledgeAmount,
     pledgeCellCapacity: PLEDGE_CELL_CAPACITY,
     receiptCellCapacity: RECEIPT_CELL_CAPACITY,
     estimatedFee: ESTIMATED_FEE,
