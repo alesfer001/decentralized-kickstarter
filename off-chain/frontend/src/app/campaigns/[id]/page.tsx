@@ -30,6 +30,52 @@ import { SkeletonDetailPage } from "@/components/Skeleton";
 
 type PledgeSortMode = "recent" | "amount";
 
+/**
+ * Detect if error is a JoyID stale-UTXO error (TransactionFailedToResolve + Unknown OutPoint).
+ * Returns true if the error matches the pattern, false otherwise.
+ */
+function isJoyIDStaleUTXOError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message;
+  return msg.includes("TransactionFailedToResolve") && msg.includes("Unknown(OutPoint(");
+}
+
+/**
+ * Retry a transaction submission once after a short delay if JoyID stale-UTXO error occurs.
+ * On first attempt, catches the stale-UTXO error, waits 2s, and retries once.
+ * On retry failure with same error, shows friendly toast message instead of throwing.
+ * Throws other errors immediately.
+ */
+async function sendTransactionWithAutoRetry(
+  signer: any,
+  tx: any,
+  toast: (type: "success" | "error" | "info" | "warning", message: string) => void
+): Promise<string> {
+  try {
+    return await signer.sendTransaction(tx);
+  } catch (firstError) {
+    // If stale-UTXO error, wait and retry once
+    if (isJoyIDStaleUTXOError(firstError)) {
+      try {
+        // Wait 2s for wallet cells to sync
+        await new Promise((r) => setTimeout(r, 2000));
+        return await signer.sendTransaction(tx);
+      } catch (retryError) {
+        // On retry failure, check if it's the same error pattern
+        if (isJoyIDStaleUTXOError(retryError)) {
+          // Show friendly message and throw — caller will catch and show toast
+          toast("warning", "Wallet cells are still syncing. Please refresh the page and retry.");
+          throw retryError;
+        }
+        // Different error — throw immediately
+        throw retryError;
+      }
+    }
+    // Not a stale-UTXO error — throw immediately
+    throw firstError;
+  }
+}
+
 export default function CampaignDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -274,7 +320,7 @@ export default function CampaignDetailPage() {
       await tx.completeInputsByCapacity(signer);
       await tx.completeFeeBy(signer, 1000);
 
-      const hash = await signer.sendTransaction(tx);
+      const hash = await sendTransactionWithAutoRetry(signer, tx, toast);
       setPledgeTxHash(hash);
       setPledgeAmount("");
       toast("success", "Pledge submitted successfully!");
