@@ -97,7 +97,8 @@ Core value: Backers' funds are automatically routed to the correct destination (
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260508-goe | Fix bot duplicate-tx error spam — track in-flight release/refund tx hashes in FinalizationBot | 2026-05-08 | e8929d5 | [260508-goe-fix-bot-duplicate-tx-error-spam-track-in](./quick/260508-goe-fix-bot-duplicate-tx-error-spam-track-in/) |
+| 260508-gs6 | Catch JoyID stale-UTXO errors on pledge submit — friendly toast + auto-retry once | 2026-05-08 | 1e0f7d6 | [260508-gs6-catch-joyid-stale-utxo-transactionfailed](./quick/260508-gs6-catch-joyid-stale-utxo-transactionfailed/) |
 
 ### Last activity
 
-Last activity: 2026-05-08 - Completed quick task 260508-goe: Fix bot duplicate-tx error spam
+Last activity: 2026-05-08 - Completed quick task 260508-gs6: JoyID stale-UTXO error UX
