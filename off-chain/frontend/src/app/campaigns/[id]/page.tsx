@@ -898,19 +898,19 @@ export default function CampaignDetailPage() {
                       return (
                         <div className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
                           <div className="flex justify-between">
-                            <span>Pledge cell capacity:</span>
+                            <span>Campaign pledge</span>
                             <span className="font-medium">{formatCost(breakdown.pledgeCellCapacity)} CKB</span>
                           </div>
                           <div className="flex justify-between">
-                            <span>Receipt cell (you keep):</span>
+                            <span>Receipt cell you keep</span>
                             <span className="font-medium">{formatCost(breakdown.receiptCellCapacity)} CKB</span>
                           </div>
                           <div className="flex justify-between">
-                            <span>Estimated tx fee:</span>
+                            <span>Network fee</span>
                             <span className="font-medium">{formatCost(breakdown.estimatedFee)} CKB</span>
                           </div>
                           <div className="border-t border-zinc-300 dark:border-zinc-700 my-2 pt-2 flex justify-between font-semibold text-zinc-800 dark:text-zinc-200">
-                            <span>Wallet deduction:</span>
+                            <span>Total locked</span>
                             <span>{formatCost(breakdown.totalCost)} CKB</span>
                           </div>
                         </div>
