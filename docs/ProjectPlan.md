@@ -1332,25 +1332,75 @@ Addressed all 6 issues from CKB core developer Officeyutong's [CKBuilder Project
 - Runs inside the existing indexer process (not a separate service)
 - Fail-safe: if the bot is down, users can still finalize manually from the UI
 
-### Phase 18: Platform Business Model & Treasury
+### Future Milestones
 
-**Purpose:** Design a sustainable business model for the platform. Currently the platform operates at zero cost to users — no fees are collected. This phase explores revenue mechanisms and treasury management to fund ongoing development, infrastructure, and the finalization bot.
+Past v1.1 (trustless distribution + automatic finalization bot, both verified on testnet), work is split across multiple milestones rather than a single Phase 18.
 
-#### Discussion Topics
-- [ ] **Fee structure:** percentage from each pledge (e.g., 1-3%) vs flat fee vs creator-side fee only
-- [ ] **Fee collection mechanism:** on-chain (baked into pledge lock script) vs off-chain (indexer/API level)
-- [ ] **Treasury contract:** on-chain treasury cell that accumulates fees, governed by multisig or DAO
-- [ ] **Fee transparency:** display platform fee clearly in UI before pledge confirmation
-- [ ] **Free tier vs premium:** should small campaigns be fee-free? Tiered pricing?
-- [ ] **Infrastructure costs:** Render (indexer hosting), Vercel (frontend), CKB node, finalization bot
-- [ ] **Grant sustainability:** how does fee revenue complement or replace grant funding?
-- [ ] **Competitive analysis:** what do other crowdfunding platforms charge? (Kickstarter: 5%, GoFundMe: 0% + tips)
+#### v1.2 — Trustless Finalization + Platform Fees & Treasury
 
-#### Implementation Considerations
-- On-chain fee collection is most trustless but requires contract changes (pledge lock script modification)
-- Off-chain fee collection is simpler but requires trust in the platform operator
-- Treasury governance: who controls the treasury? Multisig? Future DAO token?
-- Fee must not make the platform uncompetitive with alternatives
+**Purpose:** Two-part milestone, bundled because they belong together:
+1. **Close the v1.1 finalization trust gap.** Today the campaign-type script does not verify the terminal Success/Failed status against actual raised funds — an honest finalizer is currently assumed. v1.2 makes the terminal status fully verifiable on-chain so pledge-lock routing can sit on top of provably correct accounting.
+2. **Put a sustainable fee/treasury mechanism in place** so it's ready when volume arrives. At early-mainnet volume, fees fund essentially nothing; the point is to deploy and battle-test the mechanism before it matters financially.
+
+**On-chain accumulator decision (added 2026-05-29 after Arthur's feedback):** Restore `total_pledged` as a real on-chain accumulator (currently held at 0 per the v1.1 design that delegated tracking to the bot). Every pledge tx consumes the campaign cell and produces a new one with `total_pledged += pledge.amount`, enforced by the campaign-type script. At finalize, the script reads `total_pledged` directly and validates `new.status == Success` requires `total_pledged >= funding_goal`; `Failed` requires `total_pledged < funding_goal`. Tradeoff is pledge-time contention (one pledge in flight at a time per campaign), mitigated by frontend auto-retry on `OutPoint not found` (same pattern as the JoyID stale-UTXO retry shipped in Phase 17.7). Alternative considered and rejected: reference-all-pledges-at-finalize-via-cell_deps — submitter can omit pledges to manipulate sum without a separate counter, which is just the accumulator under a different name.
+
+**Locked design decisions (pending community feedback from Nervos Talk):**
+- **5% creator-side success fee** (initial rate; adjustable later via config cell). Charged only on successful campaigns. Failed campaigns refund 100% to backers — no platform fee on failure. Initial rate revised up from 3% on RetricSu's feedback (2026-05-21): start at a sustainable number, dial down later if it becomes a barrier; harder to raise once users are anchored on a low rate.
+- **Creator-side, not backer-side.** Backer pledges X; X counts toward goal. On success, creator nets `raised × 95%`; 5% routes to treasury.
+- **On-chain enforced.** Pledge-lock script requires any success-release tx to include a treasury output ≥ `pledge_amount × fee_bps / 10000`. Skipping the treasury output causes the script to reject. With the v1.2 status accumulator above, this routing now sits on top of a verifiable terminal status — fees can't be routed based on a manipulated Success/Failed decision. Still needs Scalebit + Officeyutong review on the contract code before mainnet.
+- **Configurable via a platform config cell.** Fee rate + treasury address live in a singleton cell read via cell_deps, not baked into contract args. Later governance (v1.5+) can adjust the rate without redeploying contracts.
+- **Multisig treasury from day one.** CKB secp256k1 multisig (operator + 1-2 trusted community members) until v1.5+ ships governance and custody moves to a DAO-controlled address. Confirmed acceptable by RetricSu (2026-05-21); he noted even solo-developer custody would be acceptable in the early stage, giving flexibility on signer onboarding.
+- **UI surface.** Creator sees their net payout on the create-campaign form. Backers see no fee. An About/Fees page explains the model.
+
+**v1.2 phase roadmap (working draft — will be firmed up by `/gsd:new-milestone` roadmapper):**
+
+| # | Phase | Est. dev hours | Cal. weeks @ 4.5h |
+|---|-------|----------------|-------------------|
+| 8 | Campaign accumulator + on-chain status verification + trust-boundary fixes (M-01, M-02, M-03 from `.planning/v12-pre-review/REVIEW.md`) | 10-15h | 2-3 |
+| 9 | Pledge-lock fee enforcement (treasury-output check) + resolve grace-period fee-policy question (D-01 from pre-review) | 6-10h | 1-2 |
+| 10 | Config cell contract + deployment | 6-10h | 1-2 |
+| 11 | Multisig treasury setup | 3-5h | 1 |
+| 12 | Tx-builder + indexer integration (incl. pledge-contention retry) | 10-14h | 2-3 |
+| 13 | Frontend (net-payout display, About/Fees page, retry UX) | 4-6h | 1 |
+| 14 | Testnet deployment + E2E | 5-8h | 1-2 |
+| 15 | External audit (Scalebit + Officeyutong sanity review) | 8-15h fix time | 2-4 calendar |
+| 16 | CKB Community Fund DAO grant proposal (drafted/submitted in parallel from Phase 8) | 6-10h | 2-3 calendar |
+
+**Total dev time:** ~55-90 hours hands-on. **Calendar ETA:** ~3.5-4.5 months at 4.5 h/week with some parallelism (grant drafting runs alongside engineering, audit elapsed time overlaps with frontend/E2E).
+
+**Budget envelope (working draft, target $20k total):**
+
+| Line | Range | Notes |
+|------|-------|-------|
+| Engineering (Phases 8-14) | $10-14k | 55-90h at sustainable rate; aligned with engineering portions of CKBoost ($20k/3mo), Pocket Node ($15k/4mo), Fiber Link ($20k/8wk) |
+| Audit (Phase 15, Scalebit) | $6-8k | Calibrated to phroi data point (2026-05-29): Scalebit iCKB audit was $4k for 3 scripts; v1.2 touches ~5 scripts so ~$6-8k. Refine once Scalebit quote received. |
+| Infra + treasury seeding | $500-1k | Render/Vercel paid-tier headroom + small CKB for treasury bootstrap |
+| Buffer (~15%) | $2-3k | Standard contingency |
+| **Total ask** | **~$20k** | Aligned with peer high-end; below the credibility cliff |
+
+**Disbursement structure to match peer precedent:** 10% commencement + 4 milestone payments + final 10% on mainnet launch.
+
+**Open action items before grant submission:**
+1. Email Scalebit for quote with v1.2 contract scope to lock the audit line
+2. Generate CKB grant wallet address
+3. Draft proposal against `docs/grant/community-dao-template-developers.md` (English first, Chinese follow-up)
+
+#### v1.3 — Rebrand to CrowdCell
+"Decentralized Kickstarter" isn't usable on mainnet for trademark reasons. Name **CrowdCell** picked 2026-06-01 — plays on "Crowd-Sell" (what a creator does, selling an idea to the crowd) with "cell" substitution to make the CKB-native nature explicit. Frontend pass (UI strings, page titles, meta tags, favicon, logo), repo + Render + Vercel service rename, Nervos Talk + CKBuilder Projects updates. Subject to a domain + trademark availability check during execution; fallback naming via community input if "CrowdCell" is unavailable.
+
+#### v1.4 — User Dashboard & UI/UX Improvements
+Creator dashboard ("My campaigns" — list, status, raised, action links), backer dashboard ("My pledges" — list, status, outcomes, claim links), indexer endpoints for wallet-aware queries, mobile responsiveness QA, onboarding polish.
+
+**Bundled into the grant proposal.** v1.2, v1.3, and v1.4 are all bundled into the CKB Community Fund DAO grant ask as a single "mainnet launch" milestone (decided 2026-06-01). Rationale: a grant should mean shipping to mainnet, mainnet requires a legally-safe name, and a credible product surface requires the dashboards. Cannot reasonably split into separate proposals.
+
+#### v1.5+ — Platform Token, Governance, Staking
+Governance token launch. Treasury custody transitions from multisig to DAO-controlled address. Fee rate becomes governable via the config cell already in place since v1.2.
+
+#### v2 — BTC / RGB++ Integration
+Bridge to BTC holders via RGB++ so non-CKB-native users can back campaigns. Largest UX investment of the roadmap.
+
+#### Dropped / Deferred Indefinitely
+- **Fiber subscriptions** — Patreon-style ongoing pledges via Fiber payment channels. Raised by Neon in private discussion, flagged in the Nervos Talk proposal for community signal. RetricSu pushed back (2026-05-21): "prove basic needs are met for the launchpad first, then consider advanced features like that". Dropped from scope; revisit only if launchpad use case is solid.
 
 **2026-04-06:** Phase 15.5 — v1.1 Bug Fixes
 - Fixed all 5 bugs from testnet E2E testing
@@ -1462,6 +1512,96 @@ Addressed all 6 issues from CKB core developer Officeyutong's [CKBuilder Project
 **Bonus fix:** `/health` → `/status` indexer probe — ad-blocker extensions (uBlock Origin, AdGuard, Privacy Badger) commonly denylist `/health` as a tracking endpoint, causing "Indexer Offline" for users with adblockers even when the backend is fine. Added `/status` endpoint to indexer (mirrors `/health`, kept for ops monitoring) and switched frontend `checkHealth()` to probe `/status`. Confirmed live on production: indexer shows "Online" with adblocker enabled.
 
 **Quick task references:** `.planning/quick/260508-goe-*` (bot duplicate-tx), `.planning/quick/260508-gs6-*` (JoyID UX), `.planning/quick/260508-gwd-*` (estimator overshoot).
+
+### Phase 17.8 — Community UX Feedback Round (yfeng2824)
+
+Scope: four UX issues raised by community member yfeng2824 on `alesfer001/decentralized-kickstarter#1` during the grant proposal feedback window. Fixed during the wait on Scalebit's quote, not deferred to v1.2, so the testnet demo is sharper while reviewers click through.
+
+- [x] **Issue 1 — Deadline field uses blockchain language.** ✅ Shipped 2026-07-07 (`260707-qbf`, commit `388ab3e`). Replaced block-number input with `type="datetime-local"` picker; helper text shows `Current block: #X. Estimated deadline block: #Y.` Verified live on testnet with `Current block: #21,672,933. Estimated deadline block: #21,681,824.`
+- [x] **Issue 2 — Homepage campaign list is hard to scan.** ✅ Shipped 2026-07-07 (`260707-q4t`, commit `3e1062a`). Added `All | Active | Funded | Unsuccessful | Expired` filter tabs above the grid; renamed "Failed" → "Unsuccessful" in `getStatusLabel` + `getEffectiveStatusLabel` + detail-page finalization text (enum value preserved for on-chain compat). Verified live: all 5 tabs filter correctly.
+- [x] **Issue 3 — Pledge error state feels stale.** ✅ Shipped 2026-07-07 (`260707-pt7`, commit `f527365`). `onChange` handler clears `pledgeError` live when the input becomes a valid non-empty positive number. Verified live: "Insufficient CKB, need 99826 extra CKB" error cleared instantly when amount edited from 99999 → 100.
+- [x] **Issue 4 — Pledge wallet breakdown is hard to understand.** ✅ Shipped 2026-07-07 (`260707-pxj`, commit `c547aa1`). Labels reworked to `Campaign pledge / Receipt cell you keep / Network fee / Total locked` (math untouched — reconciled in Phase 17.7). Verified live on testnet pledge form.
+
+**Total estimate:** ~4-6h. **Actual:** ~1.5h across all four quick tasks (executor durations: 12min + 5min + 20min + 12min build/verify). **Why ship now:** reviewers deciding the grant will click through the demo; rough first-impression edges hurt perception. See feedback memory `feedback_keep_shipping_between_funding`.
+
+**Status:** ✅ Phase 17.8 complete. Vercel prod deploy `decentralized-kickstarter-ncdok8xta` aliased to `decentralized-kickstarter-kappa.vercel.app`. All 4 fixes verified via live E2E on testnet (created fresh test campaign `0xb4661dd5827a54d593d74bebdf7d03a2829de883021b0d88764d7cf1858b520b_0`, exercised pledge form). Replied to yfeng2824 on GitHub issue #1 and Telegram.
+
+**2026-05-18:** v1.2 scoping + Nervos Talk community proposal
+- Rescoped post-v1.1 work: instead of a single "Phase 18 — Business Model & Treasury", split into v1.2 (fees & treasury), v1.3 (rebrand), v1.4 (user dashboard + UX), v1.5+ (token + governance), v2 (BTC/RGB++). Fiber-subscriptions kept as open/adjacent.
+- Locked v1.2 design: 3% creator-side success-only fee, on-chain enforced via pledge-lock treasury-output check, configurable via platform config cell (singleton read via cell_deps), multisig treasury custody until v1.5+, creator-only UI surface on create-campaign form + About/Fees page.
+- Drafted and posted strategic-direction + v1.2 proposal to the project's Nervos Talk thread to gather community feedback before implementation. Post asks for input on: audience (launchpad-first → BTC), fee rate, multisig vs DAO custody during the gap, on-chain enforcement design, Fiber subscription demand.
+- Pending: community feedback window, then write `.planning/PROJECT.md` / `REQUIREMENTS.md` / new ROADMAP phases (Phase 8+) for v1.2 and start GSD planning.
+
+**2026-05-21:** v1.2 — first community feedback round (RetricSu)
+- RetricSu (CKB core dev) replied on the Nervos Talk thread. Confirmed: launchpad-first audience direction, config cell as standard/reasonable, multisig treasury (even solo-developer custody acceptable in early stage), no Fiber subscriptions in early stage.
+- **Decision: fee rate raised from 3% → 5% initial** on his recommendation. Easier to dial down later via config cell than to raise; harder to push up once users are anchored on a low rate. Aligns with Kickstarter (5%) for comparability.
+- **Fiber subscriptions dropped** from "Open / Adjacent" — moved to "Dropped / Deferred Indefinitely". Revisit only after launchpad use case is proven.
+- **Soft gap noted:** RetricSu said "not sure, seems fine" on the on-chain enforcement design rather than validating it. Treasury-output check is the load-bearing security claim of v1.2 — Officeyutong is the natural ask for expert review before mainnet (Phase 14, external review).
+- Posted a reply summarizing the decisions taken on board. Thread remains open to gather additional feedback before kicking off implementation.
+
+**2026-05-29:** v1.2 — second feedback round + scope expansion + grant track started
+- **Neon (CKB team): "ready to go for a DAO proposal."** Treat as green light; v1.1 track record + locked v1.2 design is enough to start the proposal.
+- **Track decision: B (parallel).** Draft the CKB Community Fund DAO grant proposal now in parallel with v1.2 implementation, rather than waiting for v1.2 to ship first. Grant template copied to `docs/grant/community-dao-template-developers.md`.
+- **Arthur surfaced a critical architectural gap:** the v1.1 campaign-type script doesn't verify Success vs Failed against actual raised funds — only structural invariants + `since >= deadline_block`. Today an honest finalizer is assumed; a malicious finalizer could flip the terminal status and steal/grief funds. Confirmed against `contracts/campaign/src/main.rs:218-225` which explicitly acknowledges the gap in a comment.
+- **Decision: bundle the fix into v1.2** (path A) rather than ship a "v1.1.5 hotfix" first. Cleaner grant narrative ("trustless full lifecycle + sustainable model"), avoids two proposals close together, and pledge-lock fee routing should sit on top of verifiable terminal status from day one.
+- **Mechanism: restore on-chain `total_pledged` as a real accumulator** (currently held at 0 per v1.1 design that delegated tracking to the bot). Every pledge tx updates the campaign cell's total; campaign-type script enforces the math. At finalize, script reads `total_pledged` directly and validates Success/Failed against `funding_goal`. Tradeoff: pledge-time contention, mitigated by frontend auto-retry (same pattern as JoyID stale-UTXO fix from Phase 17.7). Alternative considered (reference-all-pledges via cell_deps) rejected — submitter can omit pledges without a counter.
+- **Sent concise Telegram reply to Arthur** acknowledging the gap and proposing the v1.2 bundle. Awaiting reply.
+- **Scope expansion:** v1.2 phase count grew from 8 to 9 phases. New Phase 8 = campaign accumulator + status verification; original phases shift +1.
+- **Scalebit pricing intel from phroi (Telegram):** Scalebit audited iCKB for **$4k USDC for 3 scripts**. v1.2 touches ~5 scripts (campaign-type, pledge-lock, new config cell, plus campaign-lock + receipt for first-time external review) → realistic audit line **$6-8k** (revised down from $8-12k placeholder).
+- **Calibrated grant ask: ~$20k total** (peer alignment with CKBoost $20k, Pocket Node $15k, Fiber Link $20k; Fiber Desktop $6k is the small end). Full breakdown in v1.2 budget envelope table above.
+- **ETA: ~3.5-4.5 calendar months** at 4.5 h/week with grant drafting and audit elapsed time running in parallel with engineering.
+- **Open action items:** email Scalebit for quote, generate CKB grant wallet, draft proposal text against the DAO template.
+
+**2026-06-01:** v1.2 — pre-review of v1.1 contracts (trust-boundary class)
+- Ran an internal security review of all 5 v1.1 contracts before drafting the grant proposal, hunting specifically for the class of vulnerability Arthur and Officeyutong surfaced (scripts trusting manipulable external state instead of verifying on-chain).
+- Initial gsd-code-reviewer pass flagged 6 issues (2 CRITICAL, 3 WARNING, 1 INFO). After manual cross-script verification, **3 are real medium-severity issues**, 1 is design-as-intended with a fee-policy follow-on, 1 is a false positive (missed cross-script invariant), 1 is a documented tradeoff.
+- **Real findings folded into v1.2 scope:**
+  - **M-01 (Phase 8):** Campaign destruction doesn't verify pledge cells are consumed in the same tx. Allows DoS against backers (up to 180 days locked out) if a Failed campaign is destroyed before refunds complete. `contracts/campaign/src/main.rs:311-369`.
+  - **M-02 (Phase 8):** Receipt destruction doesn't require paired pledge consumption. Allows invariant break (attacker burns own funds to break accounting). `contracts/receipt/src/main.rs:171-212`.
+  - **M-03 (Phase 8):** Campaign-lock since validation is less defensive than pledge-lock (no `is_absolute` / `flags_is_valid` check). Defense-in-depth gap; consensus mitigates practical exploit. `contracts/campaign-lock/src/main.rs:62-77`.
+  - **D-01 (Phase 9 design item):** Grace-period refund path bypasses fee enforcement (no campaign cell_dep means no fee_bps readable). Not a security issue, but a fee-policy decision needed before Phase 9 contract changes land. Options: accept the bypass, add minimum fee handling, or require config cell as cell_dep on grace-period refunds.
+- **Demoted:**
+  - **D-02 (false positive):** Pledge merge "backer mismatch" — pledge-lock's lock-hash equality check already enforces the invariant the reviewer expected to find missing.
+  - **D-03 (acknowledged tradeoff):** Receipt code_hash vs type_hash cross-check — intentional to avoid circular type-script-hash dependency.
+- **Scope impact:** Phase 8 grows from ~8-12h to ~10-15h (folds 3 fixes in). Phase 9 grows ~1-2h for the fee-policy decision. No new phase needed.
+- **Grant narrative benefit:** Frame Scalebit engagement as "verify v1.2 trust-boundary tightenings + new fee/treasury code" rather than open-ended audit. Reduces audit scope and cost. Shows due-diligence pattern.
+- Full review at `.planning/v12-pre-review/REVIEW.md`.
+- **Grant proposal drafted, then rightsized.** Initial draft at $20k (peer-aligned with CKBoost / Pocket Node / Fiber Link). User pushback on overestimation surfaced inflated per-task hours: actual delivery pace from 23 weeks of v1.1 work calibrates to ~30-40h total for v1.2, not ~60-90h. Honest budget shifts to **~$11k** (audit-led, $7k Scalebit + $3k engineering + buffer).
+- **Scope expansion: bundle v1.3 + v1.4 + mainnet launch into the grant.** A grant should mean shipping to mainnet; mainnet requires the rebrand (legal); a credible product needs the dashboards. Splitting into multiple proposals isn't reasonable for what's effectively one milestone.
+- **Rebrand name picked: CrowdCell.** Plays on "Crowd-Sell" (what a creator does) with "cell" substitution for CKB. Subject to domain + trademark availability check during execution; fallback via community input if unavailable.
+- **Final grant ask: $15k** total. Breakdown: $5k engineering (v1.2 + v1.3 + v1.4 + mainnet ops), $7k Scalebit audit, $500 design (logo + brand kit), $500 infra + treasury seed, $300 mainnet bot fund (3 months), $700 launch promo (demo video, Chinese translation, threads), $1k buffer.
+- **Milestone structure:** 10% commencement + 5 milestones (M1 on-chain trust + fees, M2 config cell + treasury + integration + testnet E2E, M3 audit, M4 rebrand + dashboards, M5 mainnet launch + promo). ETA ~5-6 months at 4.5 h/week.
+- **PROPOSAL.md** finalized at `docs/grant/PROPOSAL.md`. Pending user fill-in: name, background, GitHub handle, project repo link, dedicated CKB grant wallet, Scalebit quote confirmation.
+
+**2026-06-10:** Grant proposal pre-flight — Scalebit outreach + PROPOSAL.md ready for Neon review
+- **Scalebit quote request sent.** Short email at `docs/grant/scalebit-email.md` listing the six scripts in scope (campaign type, campaign-lock, pledge type, pledge-lock, receipt, config cell). Awaiting reply with indicative quote and timeline.
+- **CKB grant wallet generated:** `ckb1qrgqep8saj8agswr30pls73hra28ry8jlnlc3ejzh3dl2ju7xxpjxqgqqxdl32chss0tlfyexs6h74ny8cc3vl90dgpt6evj`. Filled into PROPOSAL.md §2.
+- **PROPOSAL.md placeholders filled:** identity (LESFER Ayoub / @RickSoze), GitHub (alesfer001), project repo (alesfer001/decentralized-kickstarter), background section drafted from CV with Alephium DEX (Ralph) experience framed as transferable to CKB's cell model + ckb-std. Honest scoping of what transferred (UTXO-style thinking, constrained Rust on-chain code) vs what was new (CKB pure cell model).
+- **PROPOSAL.md trim pass.** Removed low-signal content for grant judges: infrastructure trivia (Render free tier, adblocker-resistant /status probe), internal phase/finding codes (Phase 8, M-01/M-02/M-03), private intel disclosure (iCKB $4k figure from phroi), self-flattering meta ("pre-audit verification methodology documented and reusable"), redundant reviewer name-dropping. Length cut from ~3,000 to ~2,200 words.
+- **§2 Summary restructured.** Original draft led with the trust gap which framed the proposal as "we need to fix a bug." Reordered to lead with user dashboards, fee/treasury model, Scalebit audit, mainnet deployment, public launch (the appealing concrete deliverables), with rebrand and on-chain hardening as items 6-7. Each scope piece now has its own bullet per editorial direction.
+- **Sent to Neon for sanity check** via Telegram before posting on Nervos Talk. Waiting for both Neon's feedback and Scalebit's quote before finalizing the audit budget line and posting `[DIS]` version on the CKB Community Fund DAO category.
+- **Open actions:** await Neon feedback + Scalebit quote, apply any revisions, then post to Nervos Talk, then Chinese translation follows.
+
+**2026-06-23:** Neon feedback applied + community outreach + Scalebit contact + first community UX feedback
+- **Neon's feedback on PROPOSAL.md (received 2026-06-22):** five items, all applied.
+  1. Remove Neon mentions — proposal needs to stand on its own merit, and he's not strictly CKB team. Stripped "tested by Neon (CKB team)" and "Neon confirmed the project is ready for a DAO proposal" from §2 Summary and §3 Why now.
+  2. Mention whether we have a formal Scalebit quote. Reframed budget line as "placeholder pending formal quote (engagement initiated), invoice will be shared once received" instead of "indicative".
+  3. ~$5k purely from developer cost is right per Fiber Desktop precedent; audit cost on top with invoice as evidence (~$7k). Already aligned with our $5k+$7k structure, no change needed.
+  4. Link the review journey on GitHub so the community can see the path. Added Officeyutong CKBuilder Projects issue `#6` to §13; also referenced in §3.
+  5. Excluding external audit time, keep building to ~4 months. Restructured §8 milestones: M3 (rebrand + dashboards) now runs in parallel with the external audit window, M4 is the audit (calendar driven by Scalebit), M5 is mainnet launch after audit clearance. Build time stays inside ~4 months; total calendar ~5 months including the audit window.
+- **PROPOSAL.md is gitignored** (`docs/` in `.gitignore`). Not committed; stays private until posted to Nervos Talk.
+- **CKBuilders Telegram group outreach.** Posted concise feedback request mentioning the live testnet demo, GitHub repo, Nervos Talk thread, and Render free-tier cold-start heads-up. Mindset note (saved to `feedback_keep_shipping_between_funding`): not deferring community-surfaced issues to post-grant milestones — shipping cadence is part of credibility being evaluated.
+- **Scalebit (BitsLab) replied.** Confirmed they still do audits. Sent terse follow-up: "yes I have a project (CKB Kickstarter v1.2, Rust + ckb-std, 6 contracts), what's your usual process to get a quote?" Awaiting their next ask.
+- **First community feedback: yfeng2824 (GitHub issue #1).** Four well-scoped UX notes covering deadline UX (block-number input), homepage scannability (status filter), pledge form error state, and pledge cost breakdown labeling. All four added to Phase 17.8 above. Issue 4 builds on the math-reconciliation work already shipped in Phase 17.7 — that fix corrected the numbers, this one fixes the framing. Replied to yfeng acknowledging the feedback.
+- **Tone note saved** (`feedback_natural_message_tone`): drafts for Telegram/Discord/GitHub replies need to read like the user typing, not like an LLM. No em dashes, no arrows, contractions on, skip structured praise.
+- **Open actions:** await Scalebit's next message (quote process); ship Phase 17.8 fixes (~4-6h); apply any further Neon revisions if he replies; then post `[DIS]` PROPOSAL.md to Nervos Talk.
+
+**2026-07-07:** Scalebit quote received, Phase 17.8 shipped end-to-end, community loop closed
+- **Scalebit quote (received 2026-06-24, opened 2026-07-07):** $5,000 USD for v1.1 scope (5 contracts), quote expires 2026-06-27, preliminary report ~6 days post-payment. **Scope mismatch:** we need v1.2 (6 contracts, 2 modified), not v1.1 (already reviewed by Officeyutong, all findings fixed). Sent short clarification asking for a v1.2-scoped quote. Scalebit's reply: cannot quote v1.2 without seeing the code — reasonable. **Decision: park the v1.2 quote until v1.2 code lands. Use the $5k v1.1 quote as an indicative anchor in PROPOSAL.md §9** (validates the $7k v1.2 placeholder — v1.1's 5 contracts at $5k extrapolates to ~$6-7k for 6 contracts with 2 substantially modified). Updated PROPOSAL.md §8 Commencement row and §9 audit line to reflect quote status.
+- **Phase 17.8 shipped in one sitting.** All four yfeng2824 UX fixes: Issue 3 (`f527365`), Issue 4 (`c547aa1`), Issue 2 (`3e1062a`), Issue 1 (`388ab3e`). ~1.5h total across four quick tasks — well under the 4-6h estimate. Details in Phase 17.8 section above.
+- **Vercel prod deploy + live verification.** Discovered git auto-deploy hadn't fired (23-day-old cached bundle at `age: 1995909`). Ran `vercel --prod --yes` from `off-chain/frontend/` after user re-auth. Deploy `decentralized-kickstarter-ncdok8xta` aliased to production URL. Walked through all 4 fixes in Chrome: created a fresh testnet campaign (`Phase 17.8 UX Test`, 100 CKB goal, tomorrow 6pm deadline) using the new datetime picker to reach the pledge form for Issues 3+4. All 4 fixes verified visually. Test campaign left running — will auto-expire; ~389 CKB in creator's cell recoverable via v1.1 permissionless finalization.
+- **Community loop closed.** Replied to yfeng2824 on GitHub issue #1 and via Telegram DM confirming all 4 shipped with the live URL and cold-start note.
+- **Open actions:** post `[DIS]` PROPOSAL.md to Nervos Talk (unblocked — audit budget anchored by Scalebit quote); Chinese translation of proposal; then start v1.2 GSD phase planning.
 
 **2026-04-20:** Testnet Redeployment — Phase 16 Hardened Contracts
 - Deployed all 5 hardened contracts to CKB testnet (Pudge):
