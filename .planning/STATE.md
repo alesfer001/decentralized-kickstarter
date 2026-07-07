@@ -101,7 +101,8 @@ Core value: Backers' funds are automatically routed to the correct destination (
 | 260508-gwd | Reconcile frontend pledge cost estimator with builder math — fix overshoot | 2026-05-08 | 70c0cc2 | Needs Review | [260508-gwd-reconcile-frontend-pledge-cost-estimator](./quick/260508-gwd-reconcile-frontend-pledge-cost-estimator/) |
 | 260707-pt7 | Phase 17.8 Issue 3 — pledge error state clears/revalidates on input change | 2026-07-07 | f527365 | | [260707-pt7-phase-17-8-issue-3-pledge-error-state-cl](./quick/260707-pt7-phase-17-8-issue-3-pledge-error-state-cl/) |
 | 260707-pxj | Phase 17.8 Issue 4 — rework pledge wallet breakdown labels for clarity | 2026-07-07 | c547aa1 | | [260707-pxj-phase-17-8-issue-4-rework-pledge-wallet-](./quick/260707-pxj-phase-17-8-issue-4-rework-pledge-wallet-/) |
+| 260707-q4t | Phase 17.8 Issue 2 — homepage status filter tabs + rename Failed → Unsuccessful | 2026-07-07 | 3e1062a | | [260707-q4t-phase-17-8-issue-2-homepage-status-filte](./quick/260707-q4t-phase-17-8-issue-2-homepage-status-filte/) |
 
 ### Last activity
 
-Last activity: 2026-07-07 - Completed quick task 260707-pxj: Phase 17.8 Issue 4 cost breakdown labeling
+Last activity: 2026-07-07 - Completed quick task 260707-q4t: Phase 17.8 Issue 2 homepage status filter
