@@ -102,7 +102,8 @@ Core value: Backers' funds are automatically routed to the correct destination (
 | 260707-pt7 | Phase 17.8 Issue 3 — pledge error state clears/revalidates on input change | 2026-07-07 | f527365 | | [260707-pt7-phase-17-8-issue-3-pledge-error-state-cl](./quick/260707-pt7-phase-17-8-issue-3-pledge-error-state-cl/) |
 | 260707-pxj | Phase 17.8 Issue 4 — rework pledge wallet breakdown labels for clarity | 2026-07-07 | c547aa1 | | [260707-pxj-phase-17-8-issue-4-rework-pledge-wallet-](./quick/260707-pxj-phase-17-8-issue-4-rework-pledge-wallet-/) |
 | 260707-q4t | Phase 17.8 Issue 2 — homepage status filter tabs + rename Failed → Unsuccessful | 2026-07-07 | 3e1062a | | [260707-q4t-phase-17-8-issue-2-homepage-status-filte](./quick/260707-q4t-phase-17-8-issue-2-homepage-status-filte/) |
+| 260707-qbf | Phase 17.8 Issue 1 — replace deadline block-number input with datetime picker | 2026-07-07 | 388ab3e | | [260707-qbf-phase-17-8-issue-1-replace-deadline-bloc](./quick/260707-qbf-phase-17-8-issue-1-replace-deadline-bloc/) |
 
 ### Last activity
 
-Last activity: 2026-07-07 - Completed quick task 260707-q4t: Phase 17.8 Issue 2 homepage status filter
+Last activity: 2026-07-07 - Completed quick task 260707-qbf: Phase 17.8 Issue 1 deadline datetime picker (Phase 17.8 complete)
