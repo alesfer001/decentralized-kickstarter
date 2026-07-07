@@ -286,3 +286,39 @@ export function formatCost(shannons: bigint): string {
   const ckb = Number(shannons) / 100000000;
   return ckb.toFixed(2);
 }
+
+/**
+ * Convert datetime-local picker value to estimated block number using ~10s/block rate.
+ * Returns ceiling (round up blocks).
+ */
+export function datetimeToBlockNumber(
+  datetimeString: string,
+  currentBlockNumber: bigint,
+  currentBlockTimestampSeconds?: number
+): bigint {
+  const targetDate = new Date(datetimeString + "Z");
+  const targetSeconds = targetDate.getTime() / 1000;
+  const nowSeconds = currentBlockTimestampSeconds ?? Date.now() / 1000;
+  const blocksSinceNow = (targetSeconds - nowSeconds) / 10;
+  const resultBlock = currentBlockNumber + BigInt(Math.ceil(blocksSinceNow));
+
+  // Enforce minimum 1 hour (360 blocks) in the future
+  const minBlock = currentBlockNumber + 360n;
+  return resultBlock < minBlock ? minBlock : resultBlock;
+}
+
+/**
+ * Convert block number to datetime-local format string (YYYY-MM-DDTHH:mm).
+ */
+export function blockNumberToDatetime(
+  blockNumber: bigint,
+  currentBlockNumber: bigint,
+  currentBlockTimestampSeconds?: number
+): string {
+  const blocksDiff = Number(blockNumber - currentBlockNumber);
+  const secondsDiff = blocksDiff * 10;
+  const nowSeconds = currentBlockTimestampSeconds ?? Date.now() / 1000;
+  const targetSeconds = nowSeconds + secondsDiff;
+  const date = new Date(targetSeconds * 1000);
+  return date.toISOString().slice(0, 16);
+}

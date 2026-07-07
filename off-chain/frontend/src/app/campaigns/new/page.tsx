@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ccc } from "@ckb-ccc/connector-react";
-import { ckbToShannons } from "@/lib/utils";
+import { ckbToShannons, datetimeToBlockNumber } from "@/lib/utils";
 import { CONTRACTS, CAMPAIGN_DATA_SIZE } from "@/lib/constants";
 import { u64ToHexLE, serializeMetadataHex } from "@/lib/serialization";
 import { useDevnet } from "@/components/DevnetContext";
@@ -22,7 +22,7 @@ export default function CreateCampaignPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [fundingGoal, setFundingGoal] = useState("");
-  const [deadlineBlocks, setDeadlineBlocks] = useState("");
+  const [deadlineDateTime, setDeadlineDateTime] = useState("");
   const [loading, setLoading] = useState(false);
   const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
 
@@ -62,15 +62,27 @@ export default function CreateCampaignPage() {
   }
 
   function validateDeadline(): boolean {
-    const deadline = parseInt(deadlineBlocks);
-    if (isNaN(deadline) || deadline <= 0) {
-      setDeadlineError("Please enter a valid deadline block number");
+    if (!deadlineDateTime.trim()) {
+      setDeadlineError("Please select a deadline date and time");
       return false;
     }
-    if (currentBlock !== null && BigInt(deadline) <= currentBlock) {
-      setDeadlineError("Deadline must be greater than the current block");
+    if (currentBlock === null) {
+      setDeadlineError("Unable to determine current block — please refresh");
       return false;
     }
+
+    const targetDate = new Date(deadlineDateTime + "Z");
+    if (isNaN(targetDate.getTime())) {
+      setDeadlineError("Invalid date/time format");
+      return false;
+    }
+
+    const minDateTime = new Date(Date.now() + 3600 * 1000); // 1 hour from now
+    if (targetDate < minDateTime) {
+      setDeadlineError("Deadline must be at least 1 hour in the future");
+      return false;
+    }
+
     setDeadlineError(null);
     return true;
   }
@@ -90,7 +102,7 @@ export default function CreateCampaignPage() {
     if (!titleValid || !goalValid || !deadlineValid) return;
 
     const goal = parseFloat(fundingGoal);
-    const deadline = parseInt(deadlineBlocks);
+    const deadline = datetimeToBlockNumber(deadlineDateTime, currentBlock!);
 
     setLoading(true);
 
@@ -345,24 +357,18 @@ export default function CreateCampaignPage() {
         </div>
 
         <div>
-          <label
-            htmlFor="deadlineBlocks"
-            className="block text-sm font-medium mb-2"
-          >
-            Deadline (block number)
+          <label htmlFor="deadlineDateTime" className="block text-sm font-medium mb-2">
+            Campaign Deadline <span className="text-red-500">*</span>
           </label>
           <input
-            type="number"
-            id="deadlineBlocks"
-            value={deadlineBlocks}
+            type="datetime-local"
+            id="deadlineDateTime"
+            value={deadlineDateTime}
             onChange={(e) => {
-              setDeadlineBlocks(e.target.value);
+              setDeadlineDateTime(e.target.value);
               if (deadlineError) setDeadlineError(null);
             }}
             onBlur={validateDeadline}
-            placeholder="100000"
-            min="1"
-            step="1"
             className={`w-full px-4 py-2 border rounded-lg bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               deadlineError
                 ? "border-red-400 dark:border-red-600"
@@ -374,12 +380,15 @@ export default function CreateCampaignPage() {
             {deadlineError ? (
               <p className="text-sm text-red-600 dark:text-red-400">{deadlineError}</p>
             ) : (
-              <p className="text-sm text-zinc-500">
-                The block number after which the campaign ends
-                {currentBlock !== null && (
-                  <span className="ml-1">(current: #{currentBlock.toString()})</span>
+              <div className="text-sm text-zinc-500 space-y-1">
+                <p>Select when the campaign ends</p>
+                {currentBlock !== null && deadlineDateTime && (
+                  <p className="text-xs text-zinc-400">
+                    Current block: #{currentBlock.toLocaleString()}.
+                    Estimated deadline block: #{datetimeToBlockNumber(deadlineDateTime, currentBlock).toLocaleString()}.
+                  </p>
                 )}
-              </p>
+              </div>
             )}
           </div>
         </div>
