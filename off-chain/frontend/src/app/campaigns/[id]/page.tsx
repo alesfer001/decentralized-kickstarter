@@ -881,7 +881,14 @@ export default function CampaignDetailPage() {
                     type="number"
                     id="pledgeAmount"
                     value={pledgeAmount}
-                    onChange={(e) => setPledgeAmount(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setPledgeAmount(value);
+                      // Clear error if input is valid (non-empty, positive number)
+                      if (value && !isNaN(parseFloat(value)) && parseFloat(value) > 0) {
+                        setPledgeError(null);
+                      }
+                    }}
                     placeholder="100"
                     min="1"
                     step="1"
