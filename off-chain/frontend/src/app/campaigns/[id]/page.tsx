@@ -1176,7 +1176,7 @@ export default function CampaignDetailPage() {
                     This campaign has expired and needs to be finalized on-chain.
                     {BigInt(campaign.totalPledged) >= BigInt(campaign.fundingGoal)
                       ? " The funding goal was met — it will be marked as Successful. Funds will be automatically released to the creator."
-                      : " The funding goal was not met — it will be marked as Failed. Funds will be automatically refunded to backers."}
+                      : " The funding goal was not met — it will be marked as Unsuccessful. Funds will be automatically refunded to backers."}
                   </p>
                   <button
                     onClick={handleFinalize}

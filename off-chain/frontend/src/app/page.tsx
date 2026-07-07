@@ -7,12 +7,54 @@ import { CampaignCard } from "@/components/CampaignCard";
 import { SkeletonCard } from "@/components/Skeleton";
 import Link from "next/link";
 
+/**
+ * Filter campaigns by effective status
+ */
+function filterCampaigns(campaigns: Campaign[], selectedFilter: string, currentBlock: bigint | null): Campaign[] {
+  if (selectedFilter === "All") {
+    return campaigns;
+  }
+
+  return campaigns.filter((campaign) => {
+    const isExpired = currentBlock !== null && BigInt(campaign.deadlineBlock) < currentBlock;
+
+    let effectiveStatus: string;
+    if (campaign.status === 0) { // Active
+      if (!isExpired) {
+        effectiveStatus = "active";
+      } else {
+        const totalPledged = BigInt(campaign.totalPledged);
+        const fundingGoal = BigInt(campaign.fundingGoal);
+        effectiveStatus = totalPledged >= fundingGoal ? "expired_success" : "expired_failed";
+      }
+    } else if (campaign.status === 1) { // Success
+      effectiveStatus = "success";
+    } else { // Failed (status === 2)
+      effectiveStatus = "failed";
+    }
+
+    switch (selectedFilter) {
+      case "Active":
+        return effectiveStatus === "active";
+      case "Funded":
+        return effectiveStatus === "success";
+      case "Unsuccessful":
+        return effectiveStatus === "failed";
+      case "Expired":
+        return effectiveStatus === "expired_success" || effectiveStatus === "expired_failed";
+      default:
+        return true;
+    }
+  });
+}
+
 export default function Home() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [apiOnline, setApiOnline] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState<string>("All");
 
   const load = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
@@ -110,14 +152,42 @@ export default function Home() {
       )}
 
       {!loading && !error && campaigns.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {campaigns.map((campaign) => (
-            <CampaignCard
-              key={campaign.campaignId}
-              campaign={campaign}
-              currentBlock={currentBlock}
-            />
-          ))}
+        <div>
+          {/* Filter Tabs */}
+          <div className="mb-6 flex flex-wrap gap-2">
+            {["All", "Active", "Funded", "Unsuccessful", "Expired"].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setSelectedFilter(tab)}
+                className={`px-3 py-1 rounded font-medium transition-colors ${
+                  selectedFilter === tab
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {/* Campaign Grid */}
+          {filterCampaigns(campaigns, selectedFilter, currentBlock).length === 0 ? (
+            <div className="text-center py-12 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg">
+              <p className="text-zinc-600 dark:text-zinc-400">
+                No campaigns found with status "{selectedFilter}"
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filterCampaigns(campaigns, selectedFilter, currentBlock).map((campaign) => (
+                <CampaignCard
+                  key={campaign.campaignId}
+                  campaign={campaign}
+                  currentBlock={currentBlock}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
