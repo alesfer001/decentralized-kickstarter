@@ -99,7 +99,8 @@ Core value: Backers' funds are automatically routed to the correct destination (
 | 260508-goe | Fix bot duplicate-tx error spam — track in-flight release/refund tx hashes in FinalizationBot | 2026-05-08 | e8929d5 | | [260508-goe-fix-bot-duplicate-tx-error-spam-track-in](./quick/260508-goe-fix-bot-duplicate-tx-error-spam-track-in/) |
 | 260508-gs6 | Catch JoyID stale-UTXO errors on pledge submit — friendly toast + auto-retry once | 2026-05-08 | 1e0f7d6 | | [260508-gs6-catch-joyid-stale-utxo-transactionfailed](./quick/260508-gs6-catch-joyid-stale-utxo-transactionfailed/) |
 | 260508-gwd | Reconcile frontend pledge cost estimator with builder math — fix overshoot | 2026-05-08 | 70c0cc2 | Needs Review | [260508-gwd-reconcile-frontend-pledge-cost-estimator](./quick/260508-gwd-reconcile-frontend-pledge-cost-estimator/) |
+| 260707-pt7 | Phase 17.8 Issue 3 — pledge error state clears/revalidates on input change | 2026-07-07 | f527365 | | [260707-pt7-phase-17-8-issue-3-pledge-error-state-cl](./quick/260707-pt7-phase-17-8-issue-3-pledge-error-state-cl/) |
 
 ### Last activity
 
-Last activity: 2026-05-08 - Completed quick task 260508-gwd: Pledge cost estimator overshoot fix
+Last activity: 2026-07-07 - Completed quick task 260707-pt7: Phase 17.8 Issue 3 pledge error revalidation
