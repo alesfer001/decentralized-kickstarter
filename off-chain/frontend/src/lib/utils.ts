@@ -34,7 +34,7 @@ export function getStatusLabel(status: CampaignStatus): string {
     case CampaignStatus.Success:
       return "Funded";
     case CampaignStatus.Failed:
-      return "Failed";
+      return "Unsuccessful";
     default:
       return "Unknown";
   }
@@ -80,7 +80,7 @@ export function getEffectiveStatusLabel(effectiveStatus: string): string {
     case "success":
       return "Funded";
     case "failed":
-      return "Failed";
+      return "Unsuccessful";
     default:
       return "Unknown";
   }
