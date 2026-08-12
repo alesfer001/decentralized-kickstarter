@@ -4,8 +4,8 @@ milestone: v1.1
 milestone_name: Bug Fixes
 current_plan: Not started
 status: Milestone complete
-stopped_at: Phase 7 context gathered
-last_updated: "2026-07-07T00:00:00.000Z"
+stopped_at: v1.1 shipped; grant proposal posted, awaiting DIS outcome
+last_updated: "2026-08-12T12:16:34.985Z"
 progress:
   total_phases: 7
   completed_phases: 5
@@ -18,9 +18,9 @@ progress:
 
 ## Current Phase
 
-Phase: 07
+Phase: v1.1 complete (Phases 1-7) — between milestones
 Current Plan: Not started
-Next action: /gsd:quick for Phase 17.8 issues
+Next action: Chinese translation of the grant proposal, then respond to DIS-window feedback. After DIS clears, `/gsd:new-milestone` to scaffold v1.2 (PROJECT.md, REQUIREMENTS.md, ROADMAP Phases 8+).
 
 ## Project Reference
 
@@ -35,10 +35,11 @@ Core value: Backers' funds are automatically routed to the correct destination (
 
 ## Last Session
 
-- **Stopped at:** Phase 7 context gathered
-- **Completed:** CONTEXT.md, RESEARCH.md, 6 plan files, ROADMAP.md updated
-- **Session date:** 2026-04-16
-- **Tasks:** Planning only — no code changes
+- **Stopped at:** [DIS] CrowdCell grant proposal published to Nervos Talk (topic 10609)
+- **Completed:** Proposal posted under CKB Community Fund DAO with `lang-en` tag; em dashes stripped and title switched to colon form; local PROPOSAL.md synced to the published text; v1.2 pre-review REVIEW.md committed
+- **Session date:** 2026-08-12
+- **Tasks:** Docs + publication only — no code changes
+- **Waiting on:** DIS-window community feedback before v1.2 implementation starts
 
 ## Completed Plans in Phase 4
 
@@ -103,7 +104,8 @@ Core value: Backers' funds are automatically routed to the correct destination (
 | 260707-pxj | Phase 17.8 Issue 4 — rework pledge wallet breakdown labels for clarity | 2026-07-07 | c547aa1 | | [260707-pxj-phase-17-8-issue-4-rework-pledge-wallet-](./quick/260707-pxj-phase-17-8-issue-4-rework-pledge-wallet-/) |
 | 260707-q4t | Phase 17.8 Issue 2 — homepage status filter tabs + rename Failed → Unsuccessful | 2026-07-07 | 3e1062a | | [260707-q4t-phase-17-8-issue-2-homepage-status-filte](./quick/260707-q4t-phase-17-8-issue-2-homepage-status-filte/) |
 | 260707-qbf | Phase 17.8 Issue 1 — replace deadline block-number input with datetime picker | 2026-07-07 | 388ab3e | | [260707-qbf-phase-17-8-issue-1-replace-deadline-bloc](./quick/260707-qbf-phase-17-8-issue-1-replace-deadline-bloc/) |
+| 260812-jtt | Post-publication cleanup: sync PROPOSAL.md, log Nervos Talk posting, commit v1.2 pre-review, refresh STATE.md | 2026-08-12 | 710545a | | [260812-jtt-post-publication-cleanup-sync-proposal-m](./quick/260812-jtt-post-publication-cleanup-sync-proposal-m/) |
 
 ### Last activity
 
-Last activity: 2026-07-07 - Completed quick task 260707-qbf: Phase 17.8 Issue 1 deadline datetime picker (Phase 17.8 complete)
+Last activity: 2026-08-12 - Completed quick task 260812-jtt: post-publication cleanup after publishing the [DIS] CrowdCell grant proposal to Nervos Talk (topic 10609)
