@@ -1,4 +1,3 @@
-<!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
 **CKB Kickstarter v1.1 — Trustless Automatic Fund Distribution**
@@ -14,9 +13,7 @@ A decentralized all-or-nothing crowdfunding platform on Nervos CKB. v1.0 (testne
 - **Transaction size**: CKB has max transaction size limits. Pledge merging addresses this but adds complexity.
 - **Backward compatibility**: v1.1 deploys new contracts. Existing v1.0 campaigns/pledges on testnet won't be migrated — clean deployment.
 - **Budget**: Free tier infrastructure (Render indexer, Vercel frontend). No paid services.
-<!-- GSD:project-end -->
 
-<!-- GSD:stack-start source:codebase/STACK.md -->
 ## Technology Stack
 
 ## Languages & Runtime
@@ -116,9 +113,7 @@ A decentralized all-or-nothing crowdfunding platform on Nervos CKB. v1.0 (testne
 - Network selection is environment-driven (env var `NEXT_PUBLIC_NETWORK`)
 - SQLite is used for indexing persistence with background polling from CKB RPC
 - CCC SDK provides wallet integration via ConnectorReact provider pattern
-<!-- GSD:stack-end -->
 
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
 
 ## Overview
@@ -283,9 +278,7 @@ A decentralized all-or-nothing crowdfunding platform on Nervos CKB. v1.0 (testne
 - Used as validation scripts (not lock scripts)
 - Initialized with empty args (`"0x"`)
 - Cell data contains serialized struct instances
-<!-- GSD:conventions-end -->
 
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
 ## Architecture
 
 ## System Design Pattern
@@ -407,26 +400,3 @@ A decentralized all-or-nothing crowdfunding platform on Nervos CKB. v1.0 (testne
 - `PLEDGE_CODE_HASH` — Deployed pledge contract code hash
 - Campaign: `0xb71c1c0bc80ddc5a16ef041f2adf1f9a9339b56ecd63c135607e7e5ebb6ea3fc`
 - Pledge: `0x423442d38b9e1fdfe68d0e878c4003317fe85408e202fd7de776205d289bc924`
-<!-- GSD:architecture-end -->
-
-<!-- GSD:workflow-start source:GSD defaults -->
-## GSD Workflow Enforcement
-
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
-
-Use these entry points:
-- `/gsd:quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd:debug` for investigation and bug fixing
-- `/gsd:execute-phase` for planned phase work
-
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
-
-
-
-<!-- GSD:profile-start -->
-## Developer Profile
-
-> Profile not yet configured. Run `/gsd:profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
