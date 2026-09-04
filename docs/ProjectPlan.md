@@ -1615,7 +1615,7 @@ Scope: four UX issues raised by community member yfeng2824 on `alesfer001/decent
 
 **2026-09-04:** v1.2 Phase 8 — on-chain accumulator, verifiable terminal status, trust-boundary fixes (contract layer)
 
-Implementation started regardless of the DIS outcome, per the "ship between funding rounds" decision. Contract layer complete and unit-tested; off-chain integration is partial (tx-builder done, indexer + frontend outstanding).
+Implementation started regardless of the DIS outcome, per the "ship between funding rounds" decision. Contracts, transaction builder, indexer, bot and frontend all landed in one session, verified on devnet at the CLI and driven end to end in the browser. Testnet redeploy is the remaining step.
 
 **Campaign accumulator (closes Arthur's finalization trust gap).** `total_pledged` is a real on-chain field again. Every pledge transaction now consumes the campaign cell and re-creates it with `total_pledged += pledge_amount`, and the campaign type script enforces the arithmetic. At finalization the script reads the accumulator directly: `Success` requires `total_pledged >= funding_goal`, `Failed` requires `total_pledged < funding_goal`. A finalizer can no longer assert an outcome the chain does not support.
 
@@ -1669,6 +1669,12 @@ Also: 10 unit tests in the campaign contract (data round-trip, status-vs-goal ju
 - A React hydration mismatch logs on every page load, inside Next.js's own `<Next.Metadata>` internals rather than project components. Pre-existing.
 
 **Not yet done (plus deployment):** the frontend still has no pledge-contention retry — the tx-builder retries a pledge that loses the race for the campaign cell, the inline frontend path does not, and with one user per campaign the browser run never hit it. Testnet redeploy outstanding. The frontend continues to duplicate the transaction-builder's logic inline rather than importing it, which is why every contract change has to be made twice. Receipt destruction is currently unexercised by any builder method, so M-02 breaks nothing today, but `seed-frontend-test.ts`'s `consumeCells` cleanup will now fail on receipts unless a pledge is consumed alongside.
+
+**v1.1 test scripts updated but not re-run.** A `createPledgeWithReceipt` transaction now emits `[campaign, pledge, receipt]`, so the pledge cell moved from output 0 to output 1. Thirteen index references across `test-lifecycle.ts`, `test-v1.1-lifecycle.ts` and `test-v1.1-security.ts` were corrected and each file carries a header note explaining the move, but none has been executed since. `seed-frontend-test.ts` and `test-transactions.ts` use the older `createPledge` and are unaffected. `test-phase8-accumulator.ts` is the verified path.
+
+**Landed on branch `v1.2-phase8-accumulator`, not merged.** Twenty-two files across all five contracts and every off-chain package; kept off `main` so the whole of Phase 8 stays reviewable as one diff for Scalebit. Commit `1550a56`.
+
+**Week 26 progress report published** to https://github.com/RickSoze001/ckb-builder-progress-report/blob/main/Week_26.md, matching the terse house format of Weeks 23-25 (headline plus three supporting lines per group, no internal issue IDs, no mechanism detail).
 
 **2026-04-20:** Testnet Redeployment — Phase 16 Hardened Contracts
 - Deployed all 5 hardened contracts to CKB testnet (Pudge):
