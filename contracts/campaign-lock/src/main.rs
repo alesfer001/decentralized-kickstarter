@@ -11,18 +11,29 @@ ckb_std::default_alloc!(16384, 1258306, 64);
 
 use ckb_std::{
     debug,
-    high_level::{load_script, load_input_since},
+    high_level::{
+        load_script, load_input_since, load_cell_lock_hash, load_cell_capacity, load_cell_data,
+    },
     ckb_constants::Source,
+    error::SysError,
+    since::{Since, LockValue},
 };
 
 // === Error Codes ===
 pub const ERROR_INVALID_ARGS: i8 = 10;
 const ERROR_LOAD_SINCE: i8 = 11;
-#[allow(dead_code)]
-const ERROR_INVALID_SINCE: i8 = 12; // Reserved for future absolute since validation
+const ERROR_INVALID_SINCE: i8 = 12;
 const ERROR_SINCE_BELOW_DEADLINE: i8 = 13;
+// v1.2 Phase 8
+const ERROR_LOAD_CELL: i8 = 14;
+const ERROR_CAPACITY_DECREASED: i8 = 15;
 
 const CAMPAIGN_LOCK_ARGS_SIZE: usize = 8;
+
+/// Byte offset of `status` within campaign cell data, and the Active value.
+const CAMPAIGN_STATUS_OFFSET: usize = 56;
+const CAMPAIGN_DATA_MIN_SIZE: usize = 65;
+const CAMPAIGN_STATUS_ACTIVE: u8 = 0;
 
 /// Campaign lock script args layout (8 bytes):
 /// - deadline_block: u64 (bytes 0-7, LE)
@@ -39,6 +50,58 @@ impl CampaignLockArgs {
         let deadline_block = u64::from_le_bytes(data[0..8].try_into().unwrap());
         Ok(CampaignLockArgs { deadline_block })
     }
+}
+
+/// Is this transaction a pledge accumulator update?
+///
+/// v1.2 Phase 8: every pledge consumes the campaign cell and re-creates it with a larger
+/// `total_pledged`, which means the campaign cell now has to be spendable *before* the
+/// deadline. That is only allowed when the campaign is carried forward intact: an output
+/// under this same lock, holding at least the same capacity, still in Active status.
+/// Everything the data may or may not change is the type script's business; the lock only
+/// decides whether the deadline gate applies.
+fn is_active_campaign_carried_forward() -> Result<bool, i8> {
+    let own_lock_hash = load_cell_lock_hash(0, Source::GroupInput)
+        .map_err(|_| ERROR_LOAD_CELL)?;
+    let input_capacity = load_cell_capacity(0, Source::GroupInput)
+        .map_err(|_| ERROR_LOAD_CELL)?;
+
+    for i in 0.. {
+        let lock_hash = match load_cell_lock_hash(i, Source::Output) {
+            Ok(h) => h,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_CELL),
+        };
+        if lock_hash != own_lock_hash {
+            continue;
+        }
+
+        let data = match load_cell_data(i, Source::Output) {
+            Ok(d) => d,
+            Err(_) => return Err(ERROR_LOAD_CELL),
+        };
+        if data.len() < CAMPAIGN_DATA_MIN_SIZE
+            || data[CAMPAIGN_STATUS_OFFSET] != CAMPAIGN_STATUS_ACTIVE
+        {
+            continue;
+        }
+
+        let output_capacity = match load_cell_capacity(i, Source::Output) {
+            Ok(c) => c,
+            Err(_) => return Err(ERROR_LOAD_CELL),
+        };
+        if output_capacity < input_capacity {
+            debug!(
+                "Campaign carried forward with less capacity: {} -> {}",
+                input_capacity, output_capacity
+            );
+            return Err(ERROR_CAPACITY_DECREASED);
+        }
+
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 pub fn program_entry() -> i8 {
@@ -58,26 +121,50 @@ pub fn program_entry() -> i8 {
         Err(code) => return code,
     };
 
-    // 2. Load since field
+    // 2. Pledge accumulator updates happen before the deadline and are exempt from the
+    //    deadline gate. The campaign type script validates the state transition itself.
+    match is_active_campaign_carried_forward() {
+        Ok(true) => {
+            debug!("Active campaign carried forward — allowing pre-deadline spend");
+            return 0;
+        }
+        Ok(false) => {}
+        Err(code) => return code,
+    }
+
+    // 3. Everything else (finalization, destruction) is gated on the deadline.
     let since_raw = match load_input_since(0, Source::GroupInput) {
         Ok(v) => v,
         Err(_) => return ERROR_LOAD_SINCE,
     };
 
-    // 3. Check deadline: since value must be >= deadline_block from args.
-    // The since value is the raw deadline block number (same pattern as pledge-lock).
-    // CKB consensus does not enforce relative since on devnet/testnet, so enforcement
-    // happens entirely in this lock script via load_input_since().
-    if since_raw < lock_args.deadline_block {
+    // M-03: validate the since encoding explicitly instead of comparing the raw value,
+    // mirroring pledge-lock. CKB consensus already rejects malformed since, but the
+    // asymmetry between the two locks was a defense-in-depth gap.
+    let since = Since::new(since_raw);
+    if !since.is_absolute() || !since.flags_is_valid() {
+        debug!("Invalid since encoding: {}", since_raw);
+        return ERROR_INVALID_SINCE;
+    }
+
+    let since_block = match since.extract_lock_value() {
+        Some(LockValue::BlockNumber(block)) => block,
+        _ => {
+            debug!("Since must be an absolute block number");
+            return ERROR_INVALID_SINCE;
+        }
+    };
+
+    if since_block < lock_args.deadline_block {
         debug!(
             "Since {} < deadline {}: before deadline, rejecting",
-            since_raw, lock_args.deadline_block
+            since_block, lock_args.deadline_block
         );
         return ERROR_SINCE_BELOW_DEADLINE;
     }
 
     // Deadline met — allow spending. Type script will validate state transitions.
-    debug!("Deadline met (since={}, deadline={}), allowing spend", since_raw, lock_args.deadline_block);
+    debug!("Deadline met (since={}, deadline={}), allowing spend", since_block, lock_args.deadline_block);
     0
 }
 

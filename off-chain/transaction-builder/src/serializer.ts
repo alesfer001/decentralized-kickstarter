@@ -175,16 +175,23 @@ export function serializePledgeLockArgs(
 /**
  * Calculate required capacity for a cell
  * CKB formula: capacity >= sum(capacity, data, type, lock)
+ * @param typeArgsSize - byte length of the type script args (32 by default; the campaign
+ *   type script carries 64 since v1.2: TypeID + pledge-lock code hash)
  */
-export function calculateCellCapacity(dataSize: number, hasTypeScript: boolean, lockScriptSize: number): bigint {
+export function calculateCellCapacity(
+  dataSize: number,
+  hasTypeScript: boolean,
+  lockScriptSize: number,
+  typeArgsSize: number = 32
+): bigint {
   // Base: 8 bytes for capacity field itself
   const baseCapacity = 8;
 
   // Data: size of the data field
   const dataCapacity = dataSize;
 
-  // Type script: ~65 bytes if present (code_hash + hash_type + args)
-  const typeCapacity = hasTypeScript ? 65 : 0;
+  // Type script: code_hash (32) + hash_type (1) + args
+  const typeCapacity = hasTypeScript ? 33 + typeArgsSize : 0;
 
   // Lock script: usually ~65 bytes (code_hash + hash_type + args)
   const lockCapacity = lockScriptSize || 65;
@@ -197,4 +204,89 @@ export function calculateCellCapacity(dataSize: number, hasTypeScript: boolean, 
 
   // Convert to shannons (1 byte of capacity = 1 shannon, minimum is 61 CKB)
   return BigInt(Math.max(withBuffer, 61)) * BigInt(100000000);
+}
+
+/**
+ * Serialize campaign type script args
+ * Layout (64 bytes):
+ * - type_id: [u8; 32]               (bytes 0-31)  — RFC-0022 TypeID
+ * - pledge_lock_code_hash: [u8; 32] (bytes 32-63) — lets the campaign type script
+ *   recognise the pledge cells it must accumulate
+ */
+export function serializeCampaignTypeArgs(typeId: string, pledgeLockCodeHash: string): string {
+  const id = typeId.startsWith("0x") ? typeId.slice(2) : typeId;
+  const lockHash = pledgeLockCodeHash.startsWith("0x")
+    ? pledgeLockCodeHash.slice(2)
+    : pledgeLockCodeHash;
+  if (id.length !== 64 || lockHash.length !== 64) {
+    throw new Error("Campaign type args: both TypeID and pledge-lock code hash must be 32 bytes");
+  }
+  return "0x" + id + lockHash;
+}
+
+/**
+ * Read `total_pledged` (bytes 48-55, LE) out of raw campaign cell data.
+ */
+export function readTotalPledged(campaignDataHex: string): bigint {
+  const hex = campaignDataHex.startsWith("0x") ? campaignDataHex.slice(2) : campaignDataHex;
+  const field = hex.slice(96, 112); // bytes 48..56
+  let value = 0n;
+  for (let i = field.length - 2; i >= 0; i -= 2) {
+    value = (value << 8n) | BigInt(parseInt(field.slice(i, i + 2), 16));
+  }
+  return value;
+}
+
+/**
+ * Rewrite `total_pledged` in raw campaign cell data, leaving every other byte — reserved
+ * bytes and the metadata tail included — exactly as it was. The campaign type script
+ * requires a byte-identical tail across a state transition, so the accumulator update has
+ * to be a surgical edit of the existing data rather than a re-serialization.
+ */
+export function withTotalPledged(campaignDataHex: string, newTotal: bigint): string {
+  const hex = campaignDataHex.startsWith("0x") ? campaignDataHex.slice(2) : campaignDataHex;
+  if (hex.length < 130) {
+    throw new Error("Campaign data too short to carry total_pledged");
+  }
+  const field = u64ToHexLE(newTotal);
+  // This is a fixed-offset splice, so a field that is not exactly 8 bytes would shift the
+  // metadata tail rather than fail — and the type script requires that tail byte-identical.
+  // Fail loudly here instead of producing data that is subtly wrong.
+  if (field.length !== 16) {
+    throw new Error(`total_pledged ${newTotal} does not fit in u64`);
+  }
+  return "0x" + hex.slice(0, 96) + field + hex.slice(112);
+}
+
+/**
+ * Read `status` (byte 56) out of raw campaign cell data.
+ */
+export function readCampaignStatus(campaignDataHex: string): CampaignStatus {
+  const hex = campaignDataHex.startsWith("0x") ? campaignDataHex.slice(2) : campaignDataHex;
+  return parseInt(hex.slice(112, 114), 16) as CampaignStatus;
+}
+
+/**
+ * Rewrite `status` (byte 56) in raw campaign cell data, leaving every other byte intact.
+ * Used by finalization for the same reason as withTotalPledged.
+ */
+export function withCampaignStatus(campaignDataHex: string, status: CampaignStatus): string {
+  const hex = campaignDataHex.startsWith("0x") ? campaignDataHex.slice(2) : campaignDataHex;
+  if (hex.length < 130) {
+    throw new Error("Campaign data too short to carry status");
+  }
+  return "0x" + hex.slice(0, 112) + status.toString(16).padStart(2, "0") + hex.slice(114);
+}
+
+/**
+ * Read `funding_goal` (bytes 32-39, LE) out of raw campaign cell data.
+ */
+export function readFundingGoal(campaignDataHex: string): bigint {
+  const hex = campaignDataHex.startsWith("0x") ? campaignDataHex.slice(2) : campaignDataHex;
+  const field = hex.slice(64, 80);
+  let value = 0n;
+  for (let i = field.length - 2; i >= 0; i -= 2) {
+    value = (value << 8n) | BigInt(parseInt(field.slice(i, i + 2), 16));
+  }
+  return value;
 }

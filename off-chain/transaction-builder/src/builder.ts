@@ -1,7 +1,29 @@
 import { ccc } from "@ckb-ccc/core";
-import { CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams, CreatePledgeWithReceiptParams, PermissionlessReleaseParams, PermissionlessRefundParams, MergeContributionsParams } from "./types";
-import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize, serializeReceiptData, serializePledgeLockArgs, encodeDeadlineBlockAsLockArgs } from "./serializer";
+import { CampaignStatus, CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams, CreatePledgeWithReceiptParams, PermissionlessReleaseParams, PermissionlessRefundParams, MergeContributionsParams } from "./types";
+import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize, serializeReceiptData, serializePledgeLockArgs, encodeDeadlineBlockAsLockArgs, serializeCampaignTypeArgs, readTotalPledged, withTotalPledged, withCampaignStatus, readFundingGoal } from "./serializer";
 import { createCkbClient, NetworkType } from "./ckbClient";
+
+/** Byte length of the v1.2 campaign type script args: TypeID (32) + pledge-lock code hash (32) */
+const CAMPAIGN_TYPE_ARGS_SIZE = 64;
+
+/** How many times a pledge is retried when another pledge wins the race for the campaign cell */
+const PLEDGE_CONTENTION_RETRIES = 4;
+
+/**
+ * Did this transaction fail because a cell it spent had already been spent?
+ * Two pledges racing for the same campaign cell produce exactly this — the loser holds a
+ * dead out point. Same shape as the JoyID stale-UTXO retry shipped in Phase 17.7.
+ */
+function isStaleCellError(err: unknown): boolean {
+  const message = String((err as { message?: string })?.message ?? err).toLowerCase();
+  return (
+    message.includes("outpoint not found") ||
+    message.includes("dead cell") ||
+    message.includes("deadcell") ||
+    message.includes("unknown output") ||
+    message.includes("resolve failed")
+  );
+}
 
 /**
  * Transaction builder for creating campaigns and pledges
@@ -46,7 +68,8 @@ export class TransactionBuilder {
     // Calculate required capacity (65 bytes header + metadata)
     const metadataSize = (params.title || params.description) ? getMetadataSize(params.title, params.description) : 0;
     const dataSize = 65 + metadataSize;
-    const capacity = calculateCellCapacity(dataSize, true, 65);
+    // v1.2: campaign type args are 64 bytes (TypeID + pledge-lock code hash), not 32
+    const capacity = calculateCellCapacity(dataSize, true, 65, CAMPAIGN_TYPE_ARGS_SIZE);
     console.log(`Required capacity: ${capacity} shannons (${Number(capacity) / 100000000} CKB)`);
 
     // Encode deadline block as lock args (8 bytes, LE)
@@ -69,7 +92,8 @@ export class TransactionBuilder {
           type: {
             codeHash: this.campaignContract.codeHash,
             hashType: this.campaignContract.hashType,
-            args: "0x" + "00".repeat(32), // Placeholder for TypeID (32 bytes)
+            // Placeholder — replaced below once the TypeID can be computed from the inputs
+            args: "0x" + "00".repeat(CAMPAIGN_TYPE_ARGS_SIZE),
           },
         },
       ],
@@ -104,9 +128,12 @@ export class TransactionBuilder {
     const hasher = new ccc.HasherCkb();
     hasher.update(serializedInput);
     hasher.update(outputIndexBytes);
-    const typeIdArgs = hasher.digest();
-    tx.outputs[0].type!.args = typeIdArgs;
-    console.log(`TypeID args: ${typeIdArgs}`);
+    const typeId = hasher.digest();
+    // v1.2: the pledge-lock code hash rides along in args so the campaign type script can
+    // recognise the pledge cells it accumulates.
+    const typeArgs = serializeCampaignTypeArgs(typeId, this.pledgeLockContract.codeHash);
+    tx.outputs[0].type!.args = ccc.hexFrom(typeArgs);
+    console.log(`Campaign type args: ${typeArgs} (TypeID ${typeId})`);
 
     // Sign and send
     console.log("Signing transaction...");
@@ -187,26 +214,39 @@ export class TransactionBuilder {
   async finalizeCampaign(signer: ccc.Signer, params: FinalizeCampaignParams): Promise<string> {
     console.log("Building finalize campaign transaction...");
 
-    // Serialize new campaign data with updated status
-    const newCampaignData = serializeCampaignDataWithStatus(params.campaignData, params.newStatus);
-    console.log(`New campaign data: ${newCampaignData}`);
+    // The campaign cell's out point moves with every pledge since v1.2, so a caller's out
+    // point can be stale by the time it finalizes — the bot's especially, since it comes
+    // from the indexer's last cycle. Resolve the live cell by type args instead. Reading
+    // the args from the caller's out point still works when that out point is dead: the
+    // transaction that created it remains in the chain's history.
+    const typeArgs =
+      params.campaignTypeArgs ?? (await this.loadCampaignCell(params.campaignOutPoint)).type.args;
+    const campaignCell = await this.findLiveCampaignCell(typeArgs);
+    const campaign = {
+      lock: campaignCell.cellOutput.lock,
+      type: campaignCell.cellOutput.type!,
+      capacity: campaignCell.cellOutput.capacity,
+      data: ccc.hexFrom(campaignCell.outputData),
+    };
+    const campaignOutPoint = campaignCell.outPoint;
 
-    // Calculate minimum capacity for the campaign cell (65 bytes header + metadata)
-    const metadataSize = (params.campaignData.title || params.campaignData.description) ? getMetadataSize(params.campaignData.title, params.campaignData.description) : 0;
-    const dataSize = 65 + metadataSize;
-    const minCapacity = calculateCellCapacity(dataSize, true, 65);
-    console.log(`Minimum capacity required: ${minCapacity} shannons`);
+    // v1.2 finalization is a surgical edit of the on-chain data — only the status byte
+    // moves. Re-serializing from off-chain values would risk a byte for byte mismatch in
+    // the metadata tail, which the type script rejects.
+    const totalPledged = readTotalPledged(campaign.data);
+    const fundingGoal = readFundingGoal(campaign.data);
+    const status = totalPledged >= fundingGoal ? CampaignStatus.Success : CampaignStatus.Failed;
+    console.log(`Raised ${totalPledged} against goal ${fundingGoal} -> ${CampaignStatus[status]}`);
 
-    // Fetch the original campaign cell to preserve TypeID args and get original capacity
-    const campaignTx = await this.client.getTransaction(params.campaignOutPoint.txHash);
-    const originalOutput = campaignTx!.transaction!.outputs[params.campaignOutPoint.index];
-    const typeIdArgs = originalOutput.type!.args;
-    const originalCapacity = BigInt(originalOutput.capacity);
-    console.log(`Original campaign cell capacity: ${originalCapacity} shannons`);
+    // The caller's expectation is only a cross-check now: the on-chain accumulator decides.
+    if (params.newStatus !== undefined && params.newStatus !== status) {
+      throw new Error(
+        `Requested status ${CampaignStatus[params.newStatus]} contradicts the on-chain total ` +
+        `(raised ${totalPledged}, goal ${fundingGoal}). The campaign type script would reject it.`
+      );
+    }
 
-    // Calculate excess capacity to return to creator
-    const excessCapacity = originalCapacity - minCapacity;
-    console.log(`Excess capacity to return to creator: ${excessCapacity} shannons`);
+    const newCampaignData = withCampaignStatus(campaign.data, status);
 
     // Since value: raw deadline block number (same pattern as pledge-lock)
     // CKB devnet doesn't enforce since at consensus layer; the campaign-lock script
@@ -215,57 +255,24 @@ export class TransactionBuilder {
     const sinceValue = BigInt(deadlineBlock);
     console.log(`Since value for deadline ${deadlineBlock}: ${sinceValue}`);
 
-    // Encode deadline block as lock args (8 bytes, LE) - same as createCampaign
-    const deadlineArgs = encodeDeadlineBlockAsLockArgs(deadlineBlock);
-
-    // Build outputs array: campaign cell + creator change output (if excess > 0)
-    const outputs: any[] = [
-      {
-        capacity: minCapacity,
-        lock: {
-          codeHash: this.campaignLockContract.codeHash,
-          hashType: this.campaignLockContract.hashType,
-          args: deadlineArgs,
-        },
-        type: {
-          codeHash: this.campaignContract.codeHash,
-          hashType: this.campaignContract.hashType,
-          args: typeIdArgs,
-        },
-      },
-    ];
-
-    const outputsData: string[] = [newCampaignData];
-
-    // Add creator change output if there's excess capacity
-    if (excessCapacity > 0n) {
-      console.log("Adding creator change output with excess capacity");
-
-      // Reconstruct creator's lock script from creatorLockHash
-      // Use default SECP256K1 lock script parameters
-      outputs.push({
-        capacity: excessCapacity,
-        lock: {
-          codeHash: "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-          hashType: "type",
-          args: params.campaignData.creatorLockHash,
-        },
-      });
-    }
-
-    // Build the transaction: consume old campaign cell, create new one with updated status + change
+    // The campaign cell keeps every shannon it had. Skimming the difference — which the old
+    // builder did via a "change" output — is now rejected by the type script, because a
+    // permissionless finalizer could just as easily have pointed that output at itself.
     const tx = ccc.Transaction.from({
       inputs: [
         {
-          previousOutput: {
-            txHash: params.campaignOutPoint.txHash,
-            index: params.campaignOutPoint.index,
-          },
+          previousOutput: campaignOutPoint,
           since: sinceValue,  // Raw deadline block number
         },
       ],
-      outputs,
-      outputsData,
+      outputs: [
+        {
+          capacity: campaign.capacity,
+          lock: campaign.lock,
+          type: campaign.type,
+        },
+      ],
+      outputsData: [newCampaignData],
       cellDeps: [
         {
           outPoint: {
@@ -297,6 +304,64 @@ export class TransactionBuilder {
     console.log(`Campaign finalized! TX: ${txHash}`);
 
     return txHash;
+  }
+
+  /**
+   * Load a campaign cell's script, capacity and raw data from its out point.
+   */
+  private async loadCampaignCell(outPoint: { txHash: string; index: number }): Promise<{
+    lock: { codeHash: string; hashType: string; args: string };
+    type: { codeHash: string; hashType: string; args: string };
+    capacity: bigint;
+    data: string;
+  }> {
+    const tx = await this.client.getTransaction(outPoint.txHash);
+    if (!tx?.transaction) {
+      throw new Error(`Campaign transaction ${outPoint.txHash} not found`);
+    }
+    const output = tx.transaction.outputs[outPoint.index];
+    const data = tx.transaction.outputsData[outPoint.index];
+    if (!output || !output.type) {
+      throw new Error(`No campaign cell at ${outPoint.txHash}:${outPoint.index}`);
+    }
+    return {
+      lock: {
+        codeHash: ccc.hexFrom(output.lock.codeHash),
+        hashType: output.lock.hashType as string,
+        args: ccc.hexFrom(output.lock.args),
+      },
+      type: {
+        codeHash: ccc.hexFrom(output.type.codeHash),
+        hashType: output.type.hashType as string,
+        args: ccc.hexFrom(output.type.args),
+      },
+      capacity: BigInt(output.capacity),
+      data: ccc.hexFrom(data),
+    };
+  }
+
+  /**
+   * Find the live campaign cell for a given set of campaign type args.
+   *
+   * Since v1.2 every pledge consumes and re-creates the campaign cell, so its out point
+   * moves constantly. The type args (TypeID + pledge-lock code hash) are the campaign's
+   * stable identity, and this is how a caller holding a stale out point recovers.
+   */
+  async findLiveCampaignCell(campaignTypeArgs: string): Promise<ccc.Cell> {
+    const searchKey = {
+      script: {
+        codeHash: this.campaignContract.codeHash,
+        hashType: this.campaignContract.hashType as any,
+        args: campaignTypeArgs,
+      },
+      scriptType: "type" as const,
+      scriptSearchMode: "exact" as const,
+    };
+
+    for await (const cell of this.client.findCells(searchKey, "asc", 1)) {
+      return cell;
+    }
+    throw new Error(`No live campaign cell for type args ${campaignTypeArgs}`);
   }
 
   /**
@@ -457,7 +522,63 @@ export class TransactionBuilder {
    * Produces: [0] pledge cell with custom pledge lock, [1] receipt cell owned by backer
    */
   async createPledgeWithReceipt(signer: ccc.Signer, params: CreatePledgeWithReceiptParams): Promise<string> {
+    // v1.2: a pledge now also consumes and re-creates the campaign cell with a larger
+    // total_pledged. That makes pledges contend for one cell, so a pledge that loses the
+    // race is retried against the winner's fresh campaign cell rather than failing.
+    const typeArgs =
+      params.campaignTypeArgs ?? (await this.loadCampaignCell(params.campaignOutPoint)).type.args;
+
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= PLEDGE_CONTENTION_RETRIES; attempt++) {
+      const campaignCell = await this.findLiveCampaignCell(typeArgs);
+      try {
+        return await this.submitPledgeWithReceipt(signer, params, campaignCell);
+      } catch (err) {
+        lastError = err;
+        if (attempt === PLEDGE_CONTENTION_RETRIES || !isStaleCellError(err)) {
+          throw err;
+        }
+        console.warn(
+          `Pledge attempt ${attempt} lost the race for the campaign cell, retrying...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Build and send one pledge transaction against a specific campaign cell.
+   *
+   * Inputs:  campaign cell (+ the backer's cells for capacity and fee)
+   * Outputs: campaign cell with total_pledged increased by the pledge amount,
+   *          pledge cell under the pledge lock, receipt cell owned by the backer
+   */
+  private async submitPledgeWithReceipt(
+    signer: ccc.Signer,
+    params: CreatePledgeWithReceiptParams,
+    campaignCell: ccc.Cell
+  ): Promise<string> {
     console.log("Building create pledge with receipt transaction...");
+
+    const campaignTypeScript = ccc.Script.from(campaignCell.cellOutput.type!);
+    const campaignTypeScriptHash = campaignTypeScript.hash();
+    if (
+      params.campaignTypeScriptHash &&
+      params.campaignTypeScriptHash.toLowerCase() !== campaignTypeScriptHash.toLowerCase()
+    ) {
+      throw new Error(
+        `Campaign type script hash mismatch: caller passed ${params.campaignTypeScriptHash}, ` +
+        `live cell hashes to ${campaignTypeScriptHash}`
+      );
+    }
+
+    // Accumulator update: bump total_pledged, leave every other byte of the campaign data
+    // untouched (the type script requires a byte-identical tail).
+    const campaignData = ccc.hexFrom(campaignCell.outputData);
+    const newTotal = readTotalPledged(campaignData) + params.amount;
+    const newCampaignData = withTotalPledged(campaignData, newTotal);
+    console.log(`  Campaign total_pledged: ${readTotalPledged(campaignData)} -> ${newTotal}`);
 
     // Serialize pledge cell data (72 bytes): campaign_id + backer_lock_hash + amount
     const pledgeData = serializePledgeData({
@@ -471,7 +592,7 @@ export class TransactionBuilder {
 
     // Serialize pledge lock args (72 bytes): campaign_type_script_hash + deadline + backer_lock_hash
     const pledgeLockArgs = serializePledgeLockArgs(
-      params.campaignTypeScriptHash,
+      campaignTypeScriptHash,
       params.deadlineBlock,
       params.backerLockHash
     );
@@ -498,9 +619,21 @@ export class TransactionBuilder {
     const receiptTypeScriptArgs = ccc.hexFrom(this.pledgeContract.codeHash.slice(2)); // Remove 0x prefix
 
     const tx = ccc.Transaction.from({
+      inputs: [
+        {
+          // [0] Campaign cell — consumed and re-created with the updated total
+          previousOutput: campaignCell.outPoint,
+        },
+      ],
       outputs: [
         {
-          // [0] Pledge cell with custom pledge lock
+          // [0] Campaign cell, capacity and scripts unchanged
+          capacity: campaignCell.cellOutput.capacity,
+          lock: campaignCell.cellOutput.lock,
+          type: campaignCell.cellOutput.type,
+        },
+        {
+          // [1] Pledge cell with custom pledge lock
           capacity: pledgeTotalCapacity,
           lock: {
             codeHash: this.pledgeLockContract.codeHash,
@@ -514,7 +647,7 @@ export class TransactionBuilder {
           },
         },
         {
-          // [1] Receipt cell owned by backer
+          // [2] Receipt cell owned by backer
           capacity: receiptCapacity,
           lock: backerLockScript,
           type: {
@@ -524,7 +657,7 @@ export class TransactionBuilder {
           },
         },
       ],
-      outputsData: [pledgeData, receiptData],
+      outputsData: [newCampaignData, pledgeData, receiptData],
       cellDeps: [
         {
           outPoint: {
@@ -548,19 +681,30 @@ export class TransactionBuilder {
           depType: "code",
         },
         {
-          // Campaign cell as cell_dep (receipt script may verify pledge context)
+          // Campaign type script — now executes, it validates the accumulator update
           outPoint: {
-            txHash: params.campaignOutPoint.txHash,
-            index: params.campaignOutPoint.index,
+            txHash: this.campaignContract.txHash,
+            index: this.campaignContract.index,
+          },
+          depType: "code",
+        },
+        {
+          // Campaign lock script — now executes, the campaign cell is an input
+          outPoint: {
+            txHash: this.campaignLockContract.txHash,
+            index: this.campaignLockContract.index,
           },
           depType: "code",
         },
       ],
     });
 
+    // Empty witness for the campaign cell input (custom lock, no signature needed)
+    tx.witnesses.push("0x");
+
     // Complete inputs and fee (backer's cells)
     await tx.completeInputsByCapacity(signer);
-    await tx.completeFeeBy(signer, 1000);
+    await tx.completeFeeBy(signer, 2000);
 
     console.log("Signing pledge with receipt transaction...");
     const txHash = await signer.sendTransaction(tx);

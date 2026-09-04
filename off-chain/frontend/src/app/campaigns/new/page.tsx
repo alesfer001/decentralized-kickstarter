@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ccc } from "@ckb-ccc/connector-react";
 import { ckbToShannons, datetimeToBlockNumber } from "@/lib/utils";
 import { CONTRACTS, CAMPAIGN_DATA_SIZE } from "@/lib/constants";
-import { u64ToHexLE, serializeMetadataHex } from "@/lib/serialization";
+import { u64ToHexLE, serializeMetadataHex, campaignTypeArgs } from "@/lib/serialization";
 import { useDevnet } from "@/components/DevnetContext";
 import { useToast } from "@/components/Toast";
 import { fetchBlockNumber, fetchCampaign } from "@/lib/api";
@@ -134,7 +134,9 @@ export default function CreateCampaignPage() {
       const campaignData = "0x" + campaignHex;
 
       const dataSize = campaignHex.length / 2;
-      const capacity = BigInt(Math.ceil((8 + dataSize + 65 + 65) * 1.2)) * BigInt(100000000);
+      // v1.2: campaign type args are 64 bytes (TypeID + pledge-lock code hash), so the type
+      // script occupies 33 + 64 = 97 bytes rather than 65.
+      const capacity = BigInt(Math.ceil((8 + dataSize + 97 + 65) * 1.2)) * BigInt(100000000);
 
       // Use campaign-lock script with deadline block as args (8 bytes LE)
       const campaignLockArgs = "0x" + u64ToHexLE(deadlineBlock);
@@ -151,7 +153,8 @@ export default function CreateCampaignPage() {
             type: {
               codeHash: CONTRACTS.campaign.codeHash,
               hashType: CONTRACTS.campaign.hashType,
-              args: "0x" + "00".repeat(32), // Placeholder for TypeID (32 bytes)
+              // Placeholder — replaced below once the TypeID can be computed from the inputs
+              args: "0x" + "00".repeat(64),
             },
           },
         ],
@@ -182,8 +185,11 @@ export default function CreateCampaignPage() {
       const hasher = new ccc.HasherCkb();
       hasher.update(firstInput.toBytes());
       hasher.update(ccc.numLeToBytes(0, 8));
-      tx.outputs[0].type!.args = hasher.digest();
-      console.log("TypeID args:", tx.outputs[0].type!.args);
+      // v1.2: the pledge-lock code hash rides along in args so the campaign type script can
+      // recognise the pledge cells it accumulates.
+      const typeArgs = campaignTypeArgs(hasher.digest(), CONTRACTS.pledgeLock.codeHash);
+      tx.outputs[0].type!.args = ccc.hexFrom(typeArgs);
+      console.log("Campaign type args:", typeArgs);
 
       console.log("Sending transaction...");
       const hash = await signer.sendTransaction(tx);

@@ -17,7 +17,10 @@ ckb_std::default_alloc!(16384, 1258306, 64);
 
 use ckb_std::{
     debug,
-    high_level::{load_script, load_cell_data, load_input_since},
+    high_level::{
+        load_script, load_script_hash, load_cell_data, load_cell_capacity, load_cell_lock,
+        load_input_since,
+    },
     ckb_constants::Source,
     error::SysError,
     type_id::check_type_id,
@@ -33,10 +36,34 @@ const ERROR_MODIFICATION_NOT_ALLOWED: i8 = 11;
 const ERROR_INVALID_TYPE_ID: i8 = 12;
 const ERROR_DESTRUCTION_NOT_ALLOWED: i8 = 13;
 const ERROR_LOAD_SINCE: i8 = 14;
+// v1.2 Phase 8 — accumulator + on-chain status verification
+const ERROR_INVALID_ARGS: i8 = 15;
+const ERROR_INVALID_PLEDGE_UPDATE: i8 = 16;
+const ERROR_CAPACITY_DECREASED: i8 = 17;
+const ERROR_STATUS_NOT_JUSTIFIED: i8 = 18;
+const ERROR_OVERFLOW: i8 = 19;
+const ERROR_LOAD_CELL: i8 = 20;
+const ERROR_MULTIPLE_CAMPAIGN_CELLS: i8 = 21;
 
 /// Grace period: ~180 days at 8s/block = 1,944,000 blocks
-/// Success campaigns can only be destroyed after this period past deadline
+/// A finalized campaign cell can only be destroyed after this period past deadline,
+/// so that the pledge-lock grace-period fail-safe is already open for every backer
+/// by the time the campaign cell (and with it the cell_dep settlement path) is gone.
 const GRACE_PERIOD_BLOCKS: u64 = 1_944_000;
+
+/// Campaign type script args layout (64 bytes):
+/// - type_id:               [u8; 32] (bytes 0-31)  — TypeID, validated by check_type_id
+/// - pledge_lock_code_hash: [u8; 32] (bytes 32-63) — code hash of the pledge-lock contract
+///
+/// The pledge-lock code hash lets this script recognise which cells in a transaction are
+/// pledges belonging to this campaign, which is what makes the on-chain accumulator possible.
+/// It lives in args rather than as a compiled-in constant so the two contracts can be
+/// redeployed independently.
+const CAMPAIGN_ARGS_SIZE: usize = 64;
+
+/// Offset of the pledge amount inside pledge cell data (72 bytes total).
+const PLEDGE_DATA_SIZE: usize = 72;
+const PLEDGE_AMOUNT_OFFSET: usize = 64;
 
 /// Campaign status enum
 #[repr(u8)]
@@ -142,8 +169,180 @@ impl CampaignData {
     }
 }
 
+/// Count the cells belonging to this script group in `source`.
+fn count_group_cells(source: Source) -> Result<usize, i8> {
+    let mut count = 0;
+    for i in 0.. {
+        match load_cell_data(i, source) {
+            Ok(_) => count += 1,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_DATA),
+        }
+    }
+    Ok(count)
+}
+
+/// Sum the amounts of every pledge cell in `source` that belongs to this campaign.
+///
+/// A pledge cell belongs to this campaign when its lock is the pledge-lock contract and
+/// the first 32 bytes of its lock args are this campaign's type script hash. That binding
+/// is the one pledge-lock itself uses to decide where funds route, so it is the binding
+/// worth accumulating against — the `campaign_id` field in pledge *data* is informational.
+fn sum_campaign_pledges(
+    source: Source,
+    pledge_lock_code_hash: &[u8; 32],
+    campaign_type_hash: &[u8; 32],
+) -> Result<u64, i8> {
+    let mut total: u64 = 0;
+
+    for i in 0.. {
+        let lock = match load_cell_lock(i, source) {
+            Ok(l) => l,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_CELL),
+        };
+
+        if lock.code_hash().raw_data().as_ref() != &pledge_lock_code_hash[..] {
+            continue;
+        }
+
+        let lock_args = lock.args().raw_data();
+        if lock_args.len() < 32 || &lock_args[0..32] != &campaign_type_hash[..] {
+            continue;
+        }
+
+        let data = match load_cell_data(i, source) {
+            Ok(d) => d,
+            Err(_) => return Err(ERROR_LOAD_DATA),
+        };
+        if data.len() < PLEDGE_DATA_SIZE {
+            debug!("Pledge cell {} has malformed data ({} bytes)", i, data.len());
+            return Err(ERROR_INVALID_PLEDGE_UPDATE);
+        }
+
+        let amount = u64::from_le_bytes(
+            data[PLEDGE_AMOUNT_OFFSET..PLEDGE_DATA_SIZE].try_into().unwrap(),
+        );
+        total = match total.checked_add(amount) {
+            Some(v) => v,
+            None => return Err(ERROR_OVERFLOW),
+        };
+    }
+
+    Ok(total)
+}
+
+/// The campaign cell must never lose capacity across a state transition.
+/// Without this, a permissionless finalizer could route the creator's cell capacity
+/// to itself as change while still producing a structurally valid campaign cell.
+fn validate_capacity_preserved() -> Result<(), i8> {
+    let input_capacity = load_cell_capacity(0, Source::GroupInput)
+        .map_err(|_| ERROR_LOAD_CELL)?;
+    let output_capacity = load_cell_capacity(0, Source::GroupOutput)
+        .map_err(|_| ERROR_LOAD_CELL)?;
+
+    if output_capacity < input_capacity {
+        debug!(
+            "Campaign capacity decreased: {} -> {}",
+            input_capacity, output_capacity
+        );
+        return Err(ERROR_CAPACITY_DECREASED);
+    }
+
+    Ok(())
+}
+
+/// Fields that may never change once a campaign exists.
+fn validate_immutable_fields(
+    old_data: &[u8],
+    new_data: &[u8],
+    old: &CampaignData,
+    new: &CampaignData,
+    error: i8,
+) -> Result<(), i8> {
+    if old.creator_lock_hash != new.creator_lock_hash {
+        debug!("creator_lock_hash changed");
+        return Err(error);
+    }
+    if old.funding_goal != new.funding_goal {
+        debug!("funding_goal changed");
+        return Err(error);
+    }
+    if old.deadline_block != new.deadline_block {
+        debug!("deadline_block changed");
+        return Err(error);
+    }
+
+    // Issue 6b fix: reserved bytes and the metadata tail must not change.
+    // Comparing from byte 57 to the end covers both in one check; equal lengths are
+    // required so the tail can't be truncated or extended.
+    if old_data.len() != new_data.len() {
+        debug!("campaign data length changed");
+        return Err(error);
+    }
+    if old_data[57..] != new_data[57..] {
+        debug!("reserved bytes or metadata changed");
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+/// Validate a pledge accumulator update (Active -> Active, total_pledged grows).
+///
+/// v1.2: every pledge transaction consumes the campaign cell and produces a new one with
+/// `total_pledged` increased by exactly the amount of the pledge cells it creates. This is
+/// what makes the terminal status verifiable on-chain at finalization time.
+fn validate_pledge_update(
+    old_data: &[u8],
+    new_data: &[u8],
+    old: &CampaignData,
+    new: &CampaignData,
+    pledge_lock_code_hash: &[u8; 32],
+) -> Result<(), i8> {
+    if old.status != CampaignStatus::Active {
+        debug!("Pledge update: campaign is no longer Active");
+        return Err(ERROR_INVALID_PLEDGE_UPDATE);
+    }
+
+    validate_immutable_fields(old_data, new_data, old, new, ERROR_INVALID_PLEDGE_UPDATE)?;
+
+    let campaign_type_hash = load_script_hash().map_err(|_| ERROR_NO_SCRIPT)?;
+
+    // Net pledge inflow: pledge cells created minus pledge cells consumed. A merge
+    // transaction nets to zero and is rejected below — merges leave the total untouched
+    // and have no reason to consume the campaign cell.
+    let created = sum_campaign_pledges(Source::Output, pledge_lock_code_hash, &campaign_type_hash)?;
+    let consumed = sum_campaign_pledges(Source::Input, pledge_lock_code_hash, &campaign_type_hash)?;
+
+    if created <= consumed {
+        debug!("Pledge update: no net pledge inflow ({} in, {} out)", created, consumed);
+        return Err(ERROR_INVALID_PLEDGE_UPDATE);
+    }
+    let delta = created - consumed;
+
+    let expected = match old.total_pledged.checked_add(delta) {
+        Some(v) => v,
+        None => return Err(ERROR_OVERFLOW),
+    };
+    if new.total_pledged != expected {
+        debug!(
+            "Pledge update: total_pledged {} != expected {}",
+            new.total_pledged, expected
+        );
+        return Err(ERROR_INVALID_PLEDGE_UPDATE);
+    }
+
+    Ok(())
+}
+
 /// Validate a finalization (state transition from Active to Success/Failed)
-fn validate_finalization(old_data: &[u8], new_data: &[u8], old: &CampaignData, new: &CampaignData) -> Result<(), i8> {
+fn validate_finalization(
+    old_data: &[u8],
+    new_data: &[u8],
+    old: &CampaignData,
+    new: &CampaignData,
+) -> Result<(), i8> {
     // Issue 5 fix: enforce deadline via since field (defense in depth)
     // The campaign-lock script also enforces this, but type script check
     // ensures deadline is respected even if lock script changes.
@@ -180,51 +379,92 @@ fn validate_finalization(old_data: &[u8], new_data: &[u8], old: &CampaignData, n
         return Err(ERROR_INVALID_FINALIZATION);
     }
 
-    // Immutable fields must not change
-    if old.creator_lock_hash != new.creator_lock_hash {
-        debug!("Finalization: creator_lock_hash changed");
-        return Err(ERROR_INVALID_FINALIZATION);
-    }
-    if old.funding_goal != new.funding_goal {
-        debug!("Finalization: funding_goal changed");
-        return Err(ERROR_INVALID_FINALIZATION);
-    }
-    if old.deadline_block != new.deadline_block {
-        debug!("Finalization: deadline_block changed");
-        return Err(ERROR_INVALID_FINALIZATION);
-    }
+    validate_immutable_fields(old_data, new_data, old, new, ERROR_INVALID_FINALIZATION)?;
+
+    // The accumulated total carries over untouched — finalization records the outcome,
+    // it does not restate the accounting.
     if old.total_pledged != new.total_pledged {
         debug!("Finalization: total_pledged changed");
         return Err(ERROR_INVALID_FINALIZATION);
     }
 
-    // Issue 6b fix: reserved bytes and metadata must not change
-    if old_data.len() >= CampaignData::SIZE && new_data.len() >= CampaignData::SIZE {
-        // Check reserved bytes [57..65] are identical
-        if old_data[57..65] != new_data[57..65] {
-            debug!("Finalization: reserved bytes changed");
+    // v1.2: the terminal status is verified against the on-chain accumulator rather than
+    // trusted from whoever submits the finalization. This closes the v1.1 gap where an
+    // honest finalizer was assumed.
+    check_status_justified(new.status, old.total_pledged, old.funding_goal)?;
+
+    Ok(())
+}
+
+/// The terminal status a finalization claims must match what the campaign actually raised.
+/// Success requires the goal to be met; Failed requires it not to be. Active is not a
+/// terminal status and can never be the target of a finalization.
+fn check_status_justified(
+    status: CampaignStatus,
+    total_pledged: u64,
+    funding_goal: u64,
+) -> Result<(), i8> {
+    match status {
+        CampaignStatus::Success => {
+            if total_pledged < funding_goal {
+                debug!(
+                    "Finalization: Success claimed but raised {} < goal {}",
+                    total_pledged, funding_goal
+                );
+                return Err(ERROR_STATUS_NOT_JUSTIFIED);
+            }
+        }
+        CampaignStatus::Failed => {
+            if total_pledged >= funding_goal {
+                debug!(
+                    "Finalization: Failed claimed but raised {} >= goal {}",
+                    total_pledged, funding_goal
+                );
+                return Err(ERROR_STATUS_NOT_JUSTIFIED);
+            }
+        }
+        CampaignStatus::Active => {
+            debug!("Finalization: new status must be Success or Failed");
             return Err(ERROR_INVALID_FINALIZATION);
         }
-
-        // Check metadata tail (bytes 65+) is identical
-        let old_tail = &old_data[CampaignData::SIZE..];
-        let new_tail = &new_data[CampaignData::SIZE..];
-        if old_tail != new_tail {
-            debug!("Finalization: metadata changed");
-            return Err(ERROR_INVALID_FINALIZATION);
-        }
-    }
-
-    // New status must be either Success or Failed (not Active)
-    // Note: pledge tracking is done off-chain via separate pledge cells, so we can't
-    // enforce total_pledged vs funding_goal on-chain. The lock script ensures only the
-    // creator can sign this transition, and the off-chain indexer determines correct status.
-    if new.status != CampaignStatus::Success && new.status != CampaignStatus::Failed {
-        debug!("Finalization: new status must be Success or Failed");
-        return Err(ERROR_INVALID_FINALIZATION);
     }
 
     Ok(())
+}
+
+/// Destruction is only allowed once the grace period past the deadline has elapsed.
+///
+/// M-01: previously Failed campaigns could be destroyed immediately, which locked backers
+/// out of refunds for up to the grace period — pledge-lock needs either the campaign
+/// cell_dep (now gone) or the grace-period fail-safe. Gating both terminal statuses on the
+/// grace period removes the lockout window entirely: by the time the campaign cell can
+/// disappear, every backer can already refund without it.
+fn validate_destruction_after_grace(campaign: &CampaignData) -> Result<(), i8> {
+    let since_raw = load_input_since(0, Source::GroupInput)
+        .map_err(|_| ERROR_LOAD_SINCE)?;
+
+    if since_raw == 0 {
+        debug!("Campaign destruction blocked — since field required");
+        return Err(ERROR_DESTRUCTION_NOT_ALLOWED);
+    }
+
+    let since = Since::new(since_raw);
+    if !since.is_absolute() || !since.flags_is_valid() {
+        debug!("Campaign destruction blocked — invalid since encoding");
+        return Err(ERROR_DESTRUCTION_NOT_ALLOWED);
+    }
+
+    let grace_deadline = campaign.deadline_block.saturating_add(GRACE_PERIOD_BLOCKS);
+    match since.extract_lock_value() {
+        Some(LockValue::BlockNumber(block)) if block >= grace_deadline => {
+            debug!("Campaign destruction after grace period allowed");
+            Ok(())
+        }
+        _ => {
+            debug!("Campaign destruction blocked — grace period active");
+            Err(ERROR_DESTRUCTION_NOT_ALLOWED)
+        }
+    }
 }
 
 pub fn program_entry() -> i8 {
@@ -247,23 +487,39 @@ pub fn program_entry() -> i8 {
         }
     };
 
-    let _args = script.args().raw_data();
-    debug!("Script args length: {}", _args.len());
+    let args = script.args().raw_data();
+    if args.len() < CAMPAIGN_ARGS_SIZE {
+        debug!("Campaign args too short: {} bytes", args.len());
+        return ERROR_INVALID_ARGS;
+    }
+    let mut pledge_lock_code_hash = [0u8; 32];
+    pledge_lock_code_hash.copy_from_slice(&args[32..64]);
+    if pledge_lock_code_hash == [0u8; 32] {
+        debug!("Campaign args: pledge_lock_code_hash must not be zero");
+        return ERROR_INVALID_ARGS;
+    }
 
     // Detect scenario by checking GroupInput and GroupOutput
-    let has_input = match load_cell_data(0, Source::GroupInput) {
-        Ok(_) => true,
-        Err(SysError::IndexOutOfBound) => false,
-        Err(_) => return ERROR_LOAD_DATA,
+    let input_count = match count_group_cells(Source::GroupInput) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let output_count = match count_group_cells(Source::GroupOutput) {
+        Ok(c) => c,
+        Err(code) => return code,
     };
 
-    let has_output = match load_cell_data(0, Source::GroupOutput) {
-        Ok(_) => true,
-        Err(SysError::IndexOutOfBound) => false,
-        Err(_) => return ERROR_LOAD_DATA,
-    };
+    // TypeID already makes this script unique to a single cell, but assert it explicitly
+    // rather than silently validating index 0 and ignoring the rest.
+    if input_count > 1 || output_count > 1 {
+        debug!(
+            "Multiple campaign cells in group ({} in, {} out)",
+            input_count, output_count
+        );
+        return ERROR_MULTIPLE_CAMPAIGN_CELLS;
+    }
 
-    match (has_input, has_output) {
+    match (input_count > 0, output_count > 0) {
         // Creation: no input, has output
         (false, true) => {
             let data = match load_cell_data(0, Source::GroupOutput) {
@@ -283,7 +539,9 @@ pub fn program_entry() -> i8 {
             }
         }
 
-        // Finalization: has input AND output (state transition)
+        // State transition: has input AND output.
+        // A campaign that stays Active is a pledge accumulator update; anything else is a
+        // finalization. Both must preserve the cell's capacity.
         (true, true) => {
             let old_data = match load_cell_data(0, Source::GroupInput) {
                 Ok(d) => d,
@@ -301,10 +559,27 @@ pub fn program_entry() -> i8 {
                 Ok(c) => c,
                 Err(code) => return code,
             };
-            if let Err(code) = validate_finalization(&old_data, &new_data, &old, &new_campaign) {
+
+            if let Err(code) = validate_capacity_preserved() {
                 return code;
             }
-            debug!("Campaign finalization passed");
+
+            let result = if new_campaign.status == CampaignStatus::Active {
+                validate_pledge_update(
+                    &old_data,
+                    &new_data,
+                    &old,
+                    &new_campaign,
+                    &pledge_lock_code_hash,
+                )
+            } else {
+                validate_finalization(&old_data, &new_data, &old, &new_campaign)
+            };
+
+            if let Err(code) = result {
+                return code;
+            }
+            debug!("Campaign state transition passed");
             0
         }
 
@@ -321,48 +596,15 @@ pub fn program_entry() -> i8 {
             };
 
             match campaign.status {
-                CampaignStatus::Failed => {
-                    // Failed campaigns can be destroyed — refund uses backer_lock_hash
-                    // from pledge-lock args, doesn't need campaign cell_dep
-                    debug!("Failed campaign destruction allowed");
-                    0
-                }
                 CampaignStatus::Active => {
                     // Active campaigns should not be destroyed
                     debug!("Active campaign destruction blocked");
                     ERROR_DESTRUCTION_NOT_ALLOWED
                 }
-                CampaignStatus::Success => {
-                    // Success campaigns: allow destruction only after grace period
-                    // This ensures pledges can still reference the campaign during
-                    // normal release operations
-                    let since_raw = match load_input_since(0, Source::GroupInput) {
-                        Ok(v) => v,
-                        Err(_) => return ERROR_LOAD_SINCE,
-                    };
-
-                    if since_raw == 0 {
-                        debug!("Success campaign destruction blocked — since field required");
-                        return ERROR_DESTRUCTION_NOT_ALLOWED;
-                    }
-
-                    let since = Since::new(since_raw);
-                    if !since.is_absolute() || !since.flags_is_valid() {
-                        debug!("Success campaign destruction blocked — invalid since encoding");
-                        return ERROR_DESTRUCTION_NOT_ALLOWED;
-                    }
-
-                    let grace_deadline = campaign.deadline_block
-                        .saturating_add(GRACE_PERIOD_BLOCKS);
-                    match since.extract_lock_value() {
-                        Some(LockValue::BlockNumber(block)) if block >= grace_deadline => {
-                            debug!("Success campaign destruction after grace period allowed");
-                            0
-                        }
-                        _ => {
-                            debug!("Success campaign destruction blocked — grace period active");
-                            ERROR_DESTRUCTION_NOT_ALLOWED
-                        }
+                CampaignStatus::Success | CampaignStatus::Failed => {
+                    match validate_destruction_after_grace(&campaign) {
+                        Ok(()) => 0,
+                        Err(code) => code,
                     }
                 }
             }
@@ -373,5 +615,136 @@ pub fn program_entry() -> i8 {
             debug!("No campaign cells in transaction");
             0
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn campaign_bytes(goal: u64, deadline: u64, total: u64, status: u8) -> [u8; CampaignData::SIZE] {
+        let mut bytes = [0u8; CampaignData::SIZE];
+        bytes[0..32].copy_from_slice(&[7u8; 32]);
+        bytes[32..40].copy_from_slice(&goal.to_le_bytes());
+        bytes[40..48].copy_from_slice(&deadline.to_le_bytes());
+        bytes[48..56].copy_from_slice(&total.to_le_bytes());
+        bytes[56] = status;
+        bytes
+    }
+
+    // === Data round-trip ===
+
+    #[test]
+    fn test_data_roundtrip_preserves_total_pledged() {
+        let bytes = campaign_bytes(1000, 500, 750, 0);
+        let parsed = CampaignData::from_bytes(&bytes).unwrap();
+        assert_eq!(parsed.funding_goal, 1000);
+        assert_eq!(parsed.deadline_block, 500);
+        assert_eq!(parsed.total_pledged, 750);
+        assert_eq!(parsed.status, CampaignStatus::Active);
+        assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn test_new_campaign_must_start_empty() {
+        let parsed = CampaignData::from_bytes(&campaign_bytes(1000, 500, 1, 0)).unwrap();
+        assert!(parsed.validate_creation().is_err());
+        let parsed = CampaignData::from_bytes(&campaign_bytes(1000, 500, 0, 0)).unwrap();
+        assert!(parsed.validate_creation().is_ok());
+    }
+
+    // === Terminal status verification (v1.2 accumulator) ===
+
+    #[test]
+    fn test_success_requires_goal_met() {
+        assert!(check_status_justified(CampaignStatus::Success, 1000, 1000).is_ok());
+        assert!(check_status_justified(CampaignStatus::Success, 1001, 1000).is_ok());
+        assert_eq!(
+            check_status_justified(CampaignStatus::Success, 999, 1000),
+            Err(ERROR_STATUS_NOT_JUSTIFIED)
+        );
+    }
+
+    #[test]
+    fn test_failed_requires_goal_missed() {
+        assert!(check_status_justified(CampaignStatus::Failed, 999, 1000).is_ok());
+        assert!(check_status_justified(CampaignStatus::Failed, 0, 1000).is_ok());
+        assert_eq!(
+            check_status_justified(CampaignStatus::Failed, 1000, 1000),
+            Err(ERROR_STATUS_NOT_JUSTIFIED)
+        );
+    }
+
+    #[test]
+    fn test_finalizing_to_active_rejected() {
+        assert_eq!(
+            check_status_justified(CampaignStatus::Active, 1000, 1000),
+            Err(ERROR_INVALID_FINALIZATION)
+        );
+    }
+
+    // === Immutable fields ===
+
+    #[test]
+    fn test_immutable_fields_accept_status_and_total_change() {
+        // validate_immutable_fields deliberately ignores status and total_pledged —
+        // those are the two fields the transition paths are allowed to move.
+        let old_bytes = campaign_bytes(1000, 500, 0, 0);
+        let new_bytes = campaign_bytes(1000, 500, 900, 0);
+        let old = CampaignData::from_bytes(&old_bytes).unwrap();
+        let new = CampaignData::from_bytes(&new_bytes).unwrap();
+        assert!(validate_immutable_fields(&old_bytes, &new_bytes, &old, &new, 99).is_ok());
+    }
+
+    #[test]
+    fn test_immutable_fields_reject_goal_change() {
+        let old_bytes = campaign_bytes(1000, 500, 0, 0);
+        let new_bytes = campaign_bytes(10, 500, 0, 0);
+        let old = CampaignData::from_bytes(&old_bytes).unwrap();
+        let new = CampaignData::from_bytes(&new_bytes).unwrap();
+        assert_eq!(
+            validate_immutable_fields(&old_bytes, &new_bytes, &old, &new, 99),
+            Err(99)
+        );
+    }
+
+    #[test]
+    fn test_immutable_fields_reject_deadline_change() {
+        let old_bytes = campaign_bytes(1000, 500, 0, 0);
+        let new_bytes = campaign_bytes(1000, 900, 0, 0);
+        let old = CampaignData::from_bytes(&old_bytes).unwrap();
+        let new = CampaignData::from_bytes(&new_bytes).unwrap();
+        assert_eq!(
+            validate_immutable_fields(&old_bytes, &new_bytes, &old, &new, 99),
+            Err(99)
+        );
+    }
+
+    #[test]
+    fn test_immutable_fields_reject_reserved_byte_change() {
+        let old_bytes = campaign_bytes(1000, 500, 0, 0);
+        let mut new_bytes = campaign_bytes(1000, 500, 0, 0);
+        new_bytes[60] = 1;
+        let old = CampaignData::from_bytes(&old_bytes).unwrap();
+        let new = CampaignData::from_bytes(&new_bytes).unwrap();
+        assert_eq!(
+            validate_immutable_fields(&old_bytes, &new_bytes, &old, &new, 99),
+            Err(99)
+        );
+    }
+
+    #[test]
+    fn test_immutable_fields_reject_metadata_truncation() {
+        let base = campaign_bytes(1000, 500, 0, 0);
+        let mut old_bytes = base.to_vec();
+        old_bytes.extend_from_slice(b"campaign title");
+        let new_bytes = base.to_vec();
+        let old = CampaignData::from_bytes(&old_bytes).unwrap();
+        let new = CampaignData::from_bytes(&new_bytes).unwrap();
+        assert_eq!(
+            validate_immutable_fields(&old_bytes, &new_bytes, &old, &new, 99),
+            Err(99)
+        );
     }
 }

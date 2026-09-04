@@ -34,3 +34,78 @@ export function serializeMetadataHex(title: string, description: string): string
   }
   return hex;
 }
+
+/**
+ * v1.2 campaign type script args (64 bytes):
+ * - type_id: [u8; 32]               (bytes 0-31)  — RFC-0022 TypeID
+ * - pledge_lock_code_hash: [u8; 32] (bytes 32-63) — lets the campaign type script
+ *   recognise the pledge cells it accumulates
+ */
+export function campaignTypeArgs(typeId: string, pledgeLockCodeHash: string): string {
+  const id = typeId.startsWith("0x") ? typeId.slice(2) : typeId;
+  const lockHash = pledgeLockCodeHash.startsWith("0x")
+    ? pledgeLockCodeHash.slice(2)
+    : pledgeLockCodeHash;
+  if (id.length !== 64 || lockHash.length !== 64) {
+    throw new Error("Campaign type args: both TypeID and pledge-lock code hash must be 32 bytes");
+  }
+  return "0x" + id + lockHash;
+}
+
+/** Read total_pledged (bytes 48-55, LE) from raw campaign cell data */
+export function readTotalPledged(campaignDataHex: string): bigint {
+  return readU64LE(campaignDataHex, 96);
+}
+
+/** Read funding_goal (bytes 32-39, LE) from raw campaign cell data */
+export function readFundingGoal(campaignDataHex: string): bigint {
+  return readU64LE(campaignDataHex, 64);
+}
+
+/** Read status (byte 56) from raw campaign cell data */
+export function readCampaignStatus(campaignDataHex: string): number {
+  const hex = stripPrefix(campaignDataHex);
+  return parseInt(hex.slice(112, 114), 16);
+}
+
+/**
+ * Rewrite total_pledged in raw campaign cell data, leaving every other byte — reserved
+ * bytes and the metadata tail included — exactly as it was. The campaign type script
+ * requires a byte-identical tail across a state transition, so the accumulator update has
+ * to be a surgical edit of the on-chain data rather than a re-serialization.
+ */
+export function withTotalPledged(campaignDataHex: string, newTotal: bigint): string {
+  const hex = requireCampaignData(campaignDataHex);
+  const field = u64ToHexLE(newTotal);
+  if (field.length !== 16) {
+    throw new Error(`total_pledged ${newTotal} does not fit in u64`);
+  }
+  return "0x" + hex.slice(0, 96) + field + hex.slice(112);
+}
+
+/** Rewrite status (byte 56) in raw campaign cell data, leaving every other byte intact. */
+export function withCampaignStatus(campaignDataHex: string, status: number): string {
+  const hex = requireCampaignData(campaignDataHex);
+  return "0x" + hex.slice(0, 112) + status.toString(16).padStart(2, "0") + hex.slice(114);
+}
+
+function stripPrefix(hex: string): string {
+  return hex.startsWith("0x") ? hex.slice(2) : hex;
+}
+
+function requireCampaignData(hex: string): string {
+  const stripped = stripPrefix(hex);
+  if (stripped.length < 130) {
+    throw new Error("Campaign data too short (need the 65-byte header)");
+  }
+  return stripped;
+}
+
+function readU64LE(hex: string, offset: number): bigint {
+  const field = stripPrefix(hex).slice(offset, offset + 16);
+  let value = 0n;
+  for (let i = field.length - 2; i >= 0; i -= 2) {
+    value = (value << 8n) | BigInt(parseInt(field.slice(i, i + 2), 16));
+  }
+  return value;
+}

@@ -38,9 +38,6 @@ export class FinalizationBot {
   private builder: ITransactionBuilder;
   private config: BotConfig;
   private rpcUrl: string;
-  // Track campaigns seen as expired — only finalize after seeing them in 2+ cycles
-  // to ensure pledges have been indexed before deciding Success/Failed
-  private seenExpired: Set<string> = new Set();
   // Track pledges with submitted release/refund txs — avoid re-submitting same tx on each poll cycle
   // Keyed by pledgeId, value is submitted tx hash
   // Cleared when pledge cell disappears from database
@@ -126,33 +123,19 @@ export class FinalizationBot {
    * These are candidates for finalization.
    */
   private findExpiredCampaigns(currentBlock: bigint): DBCampaign[] {
-    const allCampaigns = this.db.getAllCampaigns();
     const ready: DBCampaign[] = [];
 
-    for (const campaign of allCampaigns) {
+    for (const campaign of this.db.getAllCampaigns()) {
       if (campaign.status !== CampaignStatus.Active) continue;
       if (BigInt(campaign.deadline_block) > currentBlock) continue;
-
-      // Cooldown: first time we see an expired campaign, mark it but don't finalize yet.
-      // This gives the indexer one full cycle to index any pledges/receipts before
-      // we decide Success vs Failed.
-      if (!this.seenExpired.has(campaign.id)) {
-        this.seenExpired.add(campaign.id);
-        console.log(`Bot: Campaign ${campaign.id} expired — waiting one cycle for pledge indexing`);
-        continue;
-      }
-
       ready.push(campaign);
     }
 
-    // Clean up: remove campaigns that are no longer Active (already finalized)
-    for (const id of this.seenExpired) {
-      const c = allCampaigns.find((c) => c.id === id);
-      if (!c || c.status !== CampaignStatus.Active) {
-        this.seenExpired.delete(id);
-      }
-    }
-
+    // v1.2: finalize on first sight. The one-cycle cooldown this used to apply existed so
+    // the indexer could finish indexing pledges before the bot counted them off-chain to
+    // decide Success vs Failed. The campaign cell now carries total_pledged itself and the
+    // type script checks it, so there is nothing to wait for — and waiting only widened the
+    // window in which a late pledge can still land against an expired campaign.
     return ready;
   }
 
@@ -161,27 +144,18 @@ export class FinalizationBot {
    */
   private async finalizeSingleCampaign(campaign: DBCampaign): Promise<void> {
     try {
-      // Determine outcome: total_pledged on-chain is always 0 — compute from pledge cells + receipts
-      const linkageHash = this.getLinkageHash(campaign);
-      const pledges = this.getPledgesForCampaign(campaign);
-      const receipts = this.db.getReceiptsForCampaign(linkageHash);
-      const pledgeTotal = pledges.reduce((sum, p) => sum + BigInt(p.amount), 0n);
-      const receiptTotal = receipts.reduce((sum, r) => sum + BigInt(r.pledge_amount), 0n);
-      const totalPledged = pledgeTotal > receiptTotal ? pledgeTotal : receiptTotal;
+      // v1.2: the outcome is not the bot's to decide. The campaign cell carries
+      // total_pledged as an on-chain accumulator and the campaign type script checks the
+      // terminal status against the funding goal itself, so the builder reads the live cell
+      // and the chain settles Success vs Failed. The bot only decides *when* to finalize.
+      //
+      // What follows is a log line, not a decision — these are the indexer's numbers, and
+      // if they ever disagree with the cell the transaction is what's right.
+      const totalPledged = BigInt(campaign.total_pledged);
       const fundingGoal = BigInt(campaign.funding_goal);
-
       console.log(
-        `Bot: Campaign ${campaign.id} — pledges: ${pledges.length}, receipts: ${receipts.length}, ` +
-        `totalPledged: ${totalPledged}, goal: ${fundingGoal}`
-      );
-
-      const newStatus =
-        totalPledged >= fundingGoal
-          ? CampaignStatus.Success
-          : CampaignStatus.Failed;
-
-      console.log(
-        `Bot: Finalizing campaign ${campaign.id} to ${newStatus === CampaignStatus.Success ? "Success" : "Failed"}`
+        `Bot: Finalizing campaign ${campaign.id} — indexed total ${totalPledged} against ` +
+        `goal ${fundingGoal} (expecting ${totalPledged >= fundingGoal ? "Success" : "Failed"})`
       );
 
       // Build finalization transaction parameters
@@ -194,11 +168,12 @@ export class FinalizationBot {
           creatorLockHash: campaign.creator_lock_hash,
           fundingGoal: fundingGoal,
           deadlineBlock: BigInt(campaign.deadline_block),
-          totalPledged: BigInt(campaign.total_pledged), // must match on-chain value (always 0)
+          totalPledged: totalPledged,
           title: campaign.title || undefined,
           description: campaign.description || undefined,
         },
-        newStatus: newStatus,
+        // newStatus deliberately omitted — passing one makes the builder throw when it
+        // contradicts the accumulator, which is a cross-check the bot has no need to run.
       };
 
       // Submit finalization transaction

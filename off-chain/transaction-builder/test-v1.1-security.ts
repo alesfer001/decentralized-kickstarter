@@ -17,6 +17,13 @@
  * Run with: npx ts-node test-v1.1-security.ts
  */
 
+/**
+ * NOTE (v1.2 Phase 8): a createPledgeWithReceipt transaction now also consumes and
+ * re-creates the campaign cell, so its outputs are [campaign, pledge, receipt] — the
+ * pledge moved from index 0 to index 1. The indices below were updated for that but this
+ * script has NOT been re-run since; see test-phase8-accumulator.ts for the verified path.
+ */
+
 import * as fs from "fs";
 import * as path from "path";
 import { ccc } from "@ckb-ccc/core";
@@ -162,7 +169,7 @@ async function setupSuccessCampaign() {
   await waitForTx(client, finalizeTxHash);
 
   const pledgeTxInfo = await client.getTransaction(pledgeTxHash);
-  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[0].capacity);
+  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[1].capacity);
 
   const campaignTxInfo = await client.getTransaction(finalizeTxHash);
   const campaignCapacity = BigInt(campaignTxInfo!.transaction!.outputs[0].capacity);
@@ -200,7 +207,7 @@ async function attackFailSafeBackdoor() {
     await setup.builder.permissionlessRefund(
       new ccc.SignerCkbPrivateKey(setup.client, backerKey),
       {
-        pledgeOutPoint: { txHash: setup.pledgeTxHash, index: 0 },
+        pledgeOutPoint: { txHash: setup.pledgeTxHash, index: 1 },
         pledgeCapacity: setup.pledgeCapacity,
         // campaignCellDep intentionally omitted!
         backerLockScript: {

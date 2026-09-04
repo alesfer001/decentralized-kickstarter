@@ -1613,6 +1613,63 @@ Scope: four UX issues raised by community member yfeng2824 on `alesfer001/decent
 - **Also confirmed on Neon's request:** he is not named anywhere in the proposal. The two references ("tested by Neon (CKB team)" in §2, "Neon confirmed the project is ready for a DAO proposal" in §3) were already stripped on 2026-06-23 per his own earlier feedback, before the post went live.
 - **Open actions:** (1) Chinese translation of the proposal, posted per DAO process; (2) respond to community comments through the DIS window, revising if material feedback lands; (3) after DIS clears, start v1.2 implementation via `/gsd:new-milestone` (PROJECT.md, REQUIREMENTS.md, ROADMAP Phases 8+ — design already locked, planning artifacts never written).
 
+**2026-09-04:** v1.2 Phase 8 — on-chain accumulator, verifiable terminal status, trust-boundary fixes (contract layer)
+
+Implementation started regardless of the DIS outcome, per the "ship between funding rounds" decision. Contract layer complete and unit-tested; off-chain integration is partial (tx-builder done, indexer + frontend outstanding).
+
+**Campaign accumulator (closes Arthur's finalization trust gap).** `total_pledged` is a real on-chain field again. Every pledge transaction now consumes the campaign cell and re-creates it with `total_pledged += pledge_amount`, and the campaign type script enforces the arithmetic. At finalization the script reads the accumulator directly: `Success` requires `total_pledged >= funding_goal`, `Failed` requires `total_pledged < funding_goal`. A finalizer can no longer assert an outcome the chain does not support.
+
+**How the type script recognises "its" pledges.** Campaign type args grew from 32 to 64 bytes: TypeID (bytes 0-31, unchanged, still validated by `check_type_id`) plus the pledge-lock code hash (bytes 32-63). A pledge cell counts toward this campaign when its lock is the pledge-lock contract *and* the first 32 bytes of its lock args are this campaign's type script hash. That is the binding pledge-lock itself uses to route funds, so the accumulator and the routing agree by construction. The `campaign_id` field in pledge *data* is the creation tx hash and stays informational. Keeping the code hash in args rather than compiling it in lets the two contracts be redeployed independently.
+
+The delta is computed as pledge outputs minus pledge inputs, so a merge nets to zero (and is rejected — merges have no reason to touch the campaign cell), and a net inflow greater than zero is required.
+
+**Campaign-lock had to learn a pre-deadline path.** The lock previously allowed a spend only when `since >= deadline_block`; the accumulator needs the campaign cell spendable *during* the campaign. The lock now allows a spend with no deadline check when the campaign is carried forward intact — an output under the same lock, at least the same capacity, still Active — and applies the deadline gate to everything else (finalization, destruction). What may change in the data stays the type script's business.
+
+**Capacity preservation is now enforced.** Both transition paths require the output campaign cell to hold at least the input's capacity. This closes the second half of the old finalize capacity-leak bug: the builder used to emit a "change" output for the difference, which a permissionless finalizer could have pointed at itself. `finalizeCampaign()` no longer emits it; leftover capacity is reclaimed by the creator at destruction.
+
+**Trust-boundary fixes from `docs/TrustBoundaryReview_v12.md`:**
+- **M-01** (campaign destruction pledge leak): Failed campaigns were destructible immediately, locking backers out of refunds for up to the grace period. Both terminal statuses now require `since >= deadline + GRACE_PERIOD_BLOCKS`, so by the time the campaign cell can disappear the pledge-lock grace-period fail-safe is already open for everyone. Chosen over the review's "scan inputs for pledge cells" sketch, which cannot see the pledges a transaction leaves out.
+- **M-02** (receipt destruction): `validate_receipt_destruction` now requires a pledge cell in the transaction's inputs, identified by the pledge code hash already carried in receipt args.
+- **M-03** (campaign-lock since validation): the lock decodes `since` through `Since::new` / `is_absolute` / `flags_is_valid` / `extract_lock_value` instead of comparing the raw value, matching pledge-lock.
+
+**Known gap, documented not fixed:** `since` is a lower bound, so a lock script cannot express "before the deadline". Pledges therefore remain possible after the deadline until someone finalizes. A creator could self-pledge post-deadline to push their own campaign over its goal — but self-funding was already possible during the campaign, so this is not a new capability. Worth raising with Scalebit.
+
+**Toolchain pinned.** `rust-toolchain.toml` now pins 1.94.0. Rust 1.98 (LLVM 22) fails outright on `-C target-feature=-a` with "Cannot select AtomicLoadAdd" in the `bytes` crate, and a deployed code hash is only meaningful if the build is reproducible. `scripts/build-contracts.sh` also builds campaign-lock, which it had been skipping.
+
+**Finalization bot simplified.** The bot's job narrows to deciding *when* to finalize; the outcome is no longer its call.
+- Dropped the one-cycle cooldown in `findExpiredCampaigns` (`seenExpired`). It existed so the indexer could finish indexing pledges before the bot summed them off-chain to pick Success vs Failed. With the accumulator there is nothing to wait for, and the wait only widened the window in which a late pledge can land against an expired campaign. The bot now finalizes on first sight.
+- Deleted the off-chain `pledgeTotal`/`receiptTotal` computation in `finalizeSingleCampaign` and stopped passing `newStatus`. The builder reads the live cell and the type script settles the outcome; passing a status now only buys a cross-check that throws on disagreement.
+- Indexer API serves the cell's `total_pledged` instead of `calculateTotalPledged()` (which summed live pledge cells and fell back to receipts once they were consumed). `calculateTotalPledged` is marked deprecated and kept one release as a cross-check.
+
+**On the post-deadline pledge window:** the bot is the mitigation, and it is a liveness property, not a safety one — a creator can still race a finalize transaction in the mempool, and no polling interval fixes that. It matters little because self-funding to clear one's own goal was always possible *during* the campaign; the post-deadline window only adds the ability to wait for final numbers before deciding. Worth a line to Scalebit, not a blocker.
+
+**Verified on devnet — 18/18, `off-chain/transaction-builder/test-phase8-accumulator.ts`.** New CLI integration test, run against a live OffCKB devnet with all 5 contracts redeployed. It asserts the contract error codes, not just failure:
+- accumulator across two pledges (0 -> 80 -> 230 CKB), campaign out point moving each time, capacity held
+- pledge inflating `total_pledged` rejected with **code 16** (`ERROR_INVALID_PLEDGE_UPDATE`)
+- finalization claiming Failed while above goal rejected with **code 18** (`ERROR_STATUS_NOT_JUSTIFIED`) — the v1.1 trust gap, closed and demonstrated
+- honest finalization from a deliberately stale out point (the creation tx, two pledges dead): Success, total survived, 316 CKB capacity preserved
+- v1.1 permissionless release still routes to the creator (+331 CKB)
+- M-01 pre-grace campaign destruction rejected with code 13; M-02 receipt destruction without a pledge input rejected with code 23
+
+Also: 10 unit tests in the campaign contract (data round-trip, status-vs-goal justification in both directions, immutable-field and metadata-tail rejection), all 5 contracts build for RISC-V, tx-builder and indexer type-check clean.
+
+**Code review fixes applied.** `finalizeCampaign` now resolves the live campaign cell by type args rather than trusting the caller's out point — the out point moves with every pledge, so the bot's indexer snapshot can be stale, and the pledge path already had recovery while finalization did not. `withTotalPledged` asserts the spliced field is exactly 8 bytes: it is a fixed-offset splice, so a wrong width would shift the metadata tail silently rather than fail, and the type script requires that tail byte-identical. `FinalizeCampaignParams` gained an optional `campaignTypeArgs`.
+
+**Devnet deployment (2026-09-04), superseding the earlier devnet artifacts:** campaign `0x7cf17e2e...529619`, campaign-lock `0xb6e2b333...6401bf`, receipt `0xde0c2b4d...a017d1`. Pledge and pledge-lock code hashes unchanged — neither contract was touched.
+
+**Off-chain integration done and browser-verified (2026-09-04).** Devnet redeployed, indexer + frontend run against it, full flow driven in Chrome.
+- **Indexer:** `getOriginalTxHash` now walks the whole chain of campaign-cell updates back to the creation transaction, memoized per campaign type script hash, and runs for every campaign rather than only finalized ones. Before v1.2 there was at most one hop; now the chain is as long as the campaign has backers. Everything downstream (pledge linkage, receipts, backer counts) routes through `getPledgeLinkageTxHash`, so this one fix restores all of it. `getCampaign` also falls back to matching on the creation tx hash, so a link a client is holding still resolves after the cell moves. API exposes `originalTxHash`.
+- **Frontend:** campaign creation writes 64-byte type args and sizes capacity for a 97-byte type script; the pledge flow consumes and re-creates the campaign cell (outputs are now `[campaign, pledge, receipt]` — pledge moved from index 0 to 1); finalization resolves the live cell, edits only the status byte, and preserves capacity. Campaign cards and post-pledge refetches use the creation out point as the canonical URL.
+- **Browser run:** created a campaign through the UI (64-byte args confirmed on chain), pledged twice as a second account — `total_pledged` went 0 -> 120 -> 320 CKB across two out-point moves with linkage and backer count intact — then seeded a short-deadline funded campaign and watched the bot finalize it to Success on its own and release every pledge to the creator, with the UI following the campaign through all three out-point moves on one stable URL.
+
+**Known UX gaps surfaced by the browser run (not fixed):**
+- `datetimeToBlockNumber` enforces a 1-hour (360-block) minimum deadline, so a shorter campaign cannot be created through the UI at all. Deliberate, but it silently overrides what the user picked rather than saying so.
+- The same function does `new Date(datetimeString + "Z")`, treating a local datetime-local value as UTC. Pre-existing timezone bug.
+- "Destroy Campaign & Reclaim CKB" appears as soon as distribution completes, but the campaign type script requires `deadline + grace period` — the button will fail with error code 13 for ~180 days. Pre-existing for Success campaigns; M-01 extends it to Failed ones too.
+- A React hydration mismatch logs on every page load, inside Next.js's own `<Next.Metadata>` internals rather than project components. Pre-existing.
+
+**Not yet done (plus deployment):** the frontend still has no pledge-contention retry — the tx-builder retries a pledge that loses the race for the campaign cell, the inline frontend path does not, and with one user per campaign the browser run never hit it. Testnet redeploy outstanding. The frontend continues to duplicate the transaction-builder's logic inline rather than importing it, which is why every contract change has to be made twice. Receipt destruction is currently unexercised by any builder method, so M-02 breaks nothing today, but `seed-frontend-test.ts`'s `consumeCells` cleanup will now fail on receipts unless a pledge is consumed alongside.
+
 **2026-04-20:** Testnet Redeployment — Phase 16 Hardened Contracts
 - Deployed all 5 hardened contracts to CKB testnet (Pudge):
   - Campaign: code hash `0x520ff6...a9c897`, tx `0x61f676...331ade`

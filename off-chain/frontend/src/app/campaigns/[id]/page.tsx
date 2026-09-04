@@ -23,7 +23,14 @@ import {
   formatCost,
 } from "@/lib/utils";
 import { CONTRACTS, PLEDGE_DATA_SIZE, RECEIPT_DATA_SIZE, EXPLORER_URL } from "@/lib/constants";
-import { u64ToHexLE, serializeMetadataHex } from "@/lib/serialization";
+import {
+  u64ToHexLE,
+  serializeMetadataHex,
+  readTotalPledged,
+  readFundingGoal,
+  withTotalPledged,
+  withCampaignStatus,
+} from "@/lib/serialization";
 import { useDevnet } from "@/components/DevnetContext";
 import { useToast } from "@/components/Toast";
 import { SkeletonDetailPage } from "@/components/Skeleton";
@@ -74,6 +81,33 @@ async function sendTransactionWithAutoRetry(
     // Not a stale-UTXO error — throw immediately
     throw firstError;
   }
+}
+
+/**
+ * Resolve the campaign's live cell and its on-chain data.
+ *
+ * Since v1.2 every pledge consumes and re-creates the campaign cell, so the out point the
+ * indexer last saw can already be dead. The type script (TypeID + pledge-lock code hash)
+ * is fixed for the life of the campaign, so it is read from the last known out point —
+ * historical transactions stay resolvable — and used to search for the live cell.
+ */
+async function resolveLiveCampaignCell(client: any, campaignId: string) {
+  const [knownTxHash, knownIndex] = campaignId.split("_");
+  const knownTx = await client.getTransaction(knownTxHash);
+  const knownOutput = knownTx?.transaction?.outputs?.[parseInt(knownIndex)];
+  if (!knownOutput?.type) {
+    throw new Error("Campaign cell not found — it may have been destroyed");
+  }
+  const typeScript = ccc.Script.from(knownOutput.type);
+
+  for await (const cell of client.findCells(
+    { script: typeScript, scriptType: "type" as const, scriptSearchMode: "exact" as const },
+    "asc",
+    1
+  )) {
+    return { cell, typeScript, typeScriptHash: typeScript.hash() };
+  }
+  throw new Error("Campaign is no longer live on chain");
 }
 
 export default function CampaignDetailPage() {
@@ -222,23 +256,30 @@ export default function CampaignDetailPage() {
 
       const amountShannons = ckbToShannons(amount);
 
-      const campaignTxHash = campaign.txHash.startsWith("0x")
-        ? campaign.txHash.slice(2)
-        : campaign.txHash;
+      // Pledges record the campaign's CREATION tx hash, which is what the indexer links
+      // them by. campaign.txHash is the cell's current out point, and since v1.2 that moves
+      // with every pledge — using it here would scatter pledges across identities.
+      const linkageTxHash = (campaign.originalTxHash || campaign.txHash).replace(/^0x/, "");
       const backerHash = backerLockHash.startsWith("0x")
         ? backerLockHash.slice(2)
         : backerLockHash;
 
-      // Get campaign type script hash for pledge lock args
-      const campaignTx = await client.getTransaction("0x" + campaignTxHash);
-      const campaignTypeScript = ccc.Script.from(campaignTx!.transaction!.outputs[0].type!);
-      const campaignTypeScriptHash = campaignTypeScript.hash();
-      const campaignTypeHash = campaignTypeScriptHash.startsWith("0x")
-        ? campaignTypeScriptHash.slice(2)
-        : campaignTypeScriptHash;
+      const { cell: campaignCell, typeScriptHash } = await resolveLiveCampaignCell(
+        client,
+        campaign.campaignId
+      );
+      const campaignTypeHash = typeScriptHash.replace(/^0x/, "");
+
+      // v1.2 accumulator: bump total_pledged and leave every other byte of the campaign
+      // data alone — the type script requires a byte-identical metadata tail.
+      const campaignData = ccc.hexFrom(campaignCell.outputData);
+      const newCampaignData = withTotalPledged(
+        campaignData,
+        readTotalPledged(campaignData) + amountShannons
+      );
 
       // Pledge cell data (72 bytes): campaign_id + backer_lock_hash + amount
-      const pledgeData = "0x" + campaignTxHash + backerHash + u64ToHexLE(amountShannons);
+      const pledgeData = "0x" + linkageTxHash + backerHash + u64ToHexLE(amountShannons);
 
       // Receipt cell data (40 bytes): pledge_amount + backer_lock_hash
       const receiptData = "0x" + u64ToHexLE(amountShannons) + backerHash;
@@ -257,9 +298,21 @@ export default function CampaignDetailPage() {
       const receiptCapacity = BigInt(Math.ceil((8 + RECEIPT_DATA_SIZE + 65 + 65) * 1.2)) * BigInt(100000000);
 
       const tx = ccc.Transaction.from({
+        inputs: [
+          {
+            // [0] Campaign cell — consumed and re-created with the updated total
+            previousOutput: campaignCell.outPoint,
+          },
+        ],
         outputs: [
           {
-            // Pledge cell with custom pledge lock
+            // [0] Campaign cell, capacity and scripts unchanged
+            capacity: campaignCell.cellOutput.capacity,
+            lock: campaignCell.cellOutput.lock,
+            type: campaignCell.cellOutput.type,
+          },
+          {
+            // [1] Pledge cell with custom pledge lock
             capacity: pledgeTotalCapacity,
             lock: {
               codeHash: CONTRACTS.pledgeLock.codeHash,
@@ -273,7 +326,7 @@ export default function CampaignDetailPage() {
             },
           },
           {
-            // Receipt cell owned by backer
+            // [2] Receipt cell owned by backer
             capacity: receiptCapacity,
             lock: backerLockScript,
             type: {
@@ -283,7 +336,7 @@ export default function CampaignDetailPage() {
             },
           },
         ],
-        outputsData: [pledgeData, receiptData],
+        outputsData: [newCampaignData, pledgeData, receiptData],
         cellDeps: [
           {
             outPoint: {
@@ -307,31 +360,44 @@ export default function CampaignDetailPage() {
             depType: "code",
           },
           {
-            // Campaign cell dep (for receipt type script validation)
+            // Campaign type script — validates the accumulator update
             outPoint: {
-              txHash: "0x" + campaignTxHash,
-              index: 0,
+              txHash: CONTRACTS.campaign.txHash,
+              index: CONTRACTS.campaign.index,
+            },
+            depType: "code",
+          },
+          {
+            // Campaign lock script — the campaign cell is an input now
+            outPoint: {
+              txHash: CONTRACTS.campaignLock.txHash,
+              index: CONTRACTS.campaignLock.index,
             },
             depType: "code",
           },
         ],
       });
 
+      // Empty witness for the campaign cell input (custom lock, no signature needed)
+      tx.witnesses.push("0x");
+
       await tx.completeInputsByCapacity(signer);
-      await tx.completeFeeBy(signer, 1000);
+      await tx.completeFeeBy(signer, 2000);
 
       const hash = await sendTransactionWithAutoRetry(signer, tx, toast);
       setPledgeTxHash(hash);
       setPledgeAmount("");
       toast("success", "Pledge submitted successfully!");
 
-      // Poll until the new pledge appears
+      // Poll until the new pledge appears. The campaign cell moved when the pledge landed,
+      // so refetch by its creation out point — the id in the URL may now be a dead cell.
+      const stableId = campaign.originalTxHash ? `${campaign.originalTxHash}_0` : campaignId;
       const prevCount = pledges.length;
       await pollForChange(async () => {
-        const newPledges = await fetchPledgesForCampaign(campaignId);
+        const newPledges = await fetchPledgesForCampaign(stableId);
         if (newPledges.length > prevCount) {
           setPledges(newPledges);
-          const newCampaign = await fetchCampaign(campaignId);
+          const newCampaign = await fetchCampaign(stableId);
           if (newCampaign) setCampaign(newCampaign);
           return true;
         }
@@ -357,58 +423,36 @@ export default function CampaignDetailPage() {
     setActionTxHash(null);
 
     try {
-      const totalPledged = BigInt(campaign.totalPledged);
-      const fundingGoal = BigInt(campaign.fundingGoal);
-      const newStatus = totalPledged >= fundingGoal ? CampaignStatus.Success : CampaignStatus.Failed;
-
-      const creatorHash = campaign.creator.startsWith("0x") ? campaign.creator.slice(2) : campaign.creator;
-      const fundingGoalHex = u64ToHexLE(fundingGoal);
-      const deadlineBlockHex = u64ToHexLE(BigInt(campaign.deadlineBlock));
-      const totalPledgedHex = u64ToHexLE(BigInt(0));
-      const statusHex = newStatus.toString(16).padStart(2, "0");
-      const reserved = "00".repeat(8);
-      let campaignHex = creatorHash + fundingGoalHex + deadlineBlockHex + totalPledgedHex + statusHex + reserved;
-
-      if (campaign.title || campaign.description) {
-        campaignHex += serializeMetadataHex(campaign.title || "", campaign.description || "");
-      }
-      const newCampaignData = "0x" + campaignHex;
-
       const client = signer.client;
 
-      const dataSize = campaignHex.length / 2;
-      const capacity = BigInt(Math.ceil((8 + dataSize + 65 + 65) * 1.2)) * BigInt(100000000);
+      // v1.2: the outcome is decided by the on-chain accumulator, not by the indexer's
+      // numbers, and the campaign type script rejects a status the total does not support.
+      // Read the live cell and edit only its status byte — re-serializing the data would
+      // risk a mismatch in the metadata tail, which the type script requires unchanged.
+      const { cell: campaignCell } = await resolveLiveCampaignCell(client, campaign.campaignId);
+      const campaignData = ccc.hexFrom(campaignCell.outputData);
 
-      const [txHash, indexStr] = campaign.campaignId.split("_");
+      const totalPledged = readTotalPledged(campaignData);
+      const fundingGoal = readFundingGoal(campaignData);
+      const newStatus = totalPledged >= fundingGoal ? CampaignStatus.Success : CampaignStatus.Failed;
+      const newCampaignData = withCampaignStatus(campaignData, newStatus);
 
-      // Fetch original campaign cell to preserve TypeID args and lock script
-      const campaignTx = await client.getTransaction(txHash);
-      const originalOutput = campaignTx!.transaction!.outputs[parseInt(indexStr)];
-      const typeIdArgs = originalOutput.type!.args;
-      const originalLock = originalOutput.lock;
-
-      // Use since field for campaign-lock deadline enforcement
       const deadlineBlock = BigInt(campaign.deadlineBlock);
 
       const tx = ccc.Transaction.from({
         inputs: [
           {
-            previousOutput: {
-              txHash: txHash,
-              index: parseInt(indexStr),
-            },
+            previousOutput: campaignCell.outPoint,
             since: deadlineBlock,
           },
         ],
         outputs: [
           {
-            capacity,
-            lock: originalLock,
-            type: {
-              codeHash: CONTRACTS.campaign.codeHash,
-              hashType: CONTRACTS.campaign.hashType,
-              args: typeIdArgs,
-            },
+            // Capacity is preserved exactly — the type script rejects a campaign cell that
+            // comes out of a transition worth less than it went in.
+            capacity: campaignCell.cellOutput.capacity,
+            lock: campaignCell.cellOutput.lock,
+            type: campaignCell.cellOutput.type,
           },
         ],
         outputsData: [newCampaignData],
@@ -430,7 +474,9 @@ export default function CampaignDetailPage() {
         ],
       });
 
-      await tx.completeFeeBy(signer, 1000);
+      tx.witnesses.push("0x");
+
+      await tx.completeFeeBy(signer, 2000);
       const hash = await signer.sendTransaction(tx);
       setActionTxHash(hash);
       toast("success", "Campaign finalized! Redirecting...");

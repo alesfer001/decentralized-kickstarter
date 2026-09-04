@@ -33,6 +33,8 @@ const ERROR_LOAD_SCRIPT: i8 = 19;
 const ERROR_INVALID_ARGS: i8 = 20;
 const ERROR_AMOUNT_MISMATCH: i8 = 21;
 const ERROR_BACKER_MISMATCH: i8 = 22;
+// v1.2 Phase 8 (M-02)
+const ERROR_NO_PLEDGE_CONSUMED: i8 = 23;
 
 /// Maximum fee deducted during refund (1 CKB = 100M shannons)
 const MAX_FEE: u64 = 100_000_000;
@@ -80,17 +82,10 @@ impl ReceiptData {
 /// between pledge and receipt args.
 fn validate_receipt_creation() -> i8 {
     // Load receipt type script to get pledge code hash from args
-    let script = match load_script() {
-        Ok(s) => s,
-        Err(_) => return ERROR_LOAD_SCRIPT,
+    let pledge_code_hash = match pledge_code_hash_from_args() {
+        Ok(h) => h,
+        Err(code) => return code,
     };
-    let args = script.args().raw_data();
-    if args.len() < 32 {
-        debug!("Receipt args too short — need pledge code hash");
-        return ERROR_INVALID_ARGS;
-    }
-    let mut pledge_code_hash = [0u8; 32];
-    pledge_code_hash.copy_from_slice(&args[0..32]);
 
     let receipt_data = match load_cell_data(0, Source::GroupOutput) {
         Ok(d) => d,
@@ -166,9 +161,56 @@ fn validate_receipt_creation() -> i8 {
     0
 }
 
+/// Read the pledge contract code hash out of this receipt's type script args.
+fn pledge_code_hash_from_args() -> Result<[u8; 32], i8> {
+    let script = load_script().map_err(|_| ERROR_LOAD_SCRIPT)?;
+    let args = script.args().raw_data();
+    if args.len() < 32 {
+        debug!("Receipt args too short — need pledge code hash");
+        return Err(ERROR_INVALID_ARGS);
+    }
+    let mut pledge_code_hash = [0u8; 32];
+    pledge_code_hash.copy_from_slice(&args[0..32]);
+    Ok(pledge_code_hash)
+}
+
+/// M-02: a receipt only exists as the counterpart of a pledge cell, so destroying one
+/// must consume a pledge cell in the same transaction. Without this an attacker willing
+/// to burn capital could destroy a receipt while leaving the pledge intact, paying the
+/// refund output from another input and leaving the pledge's accounting inconsistent.
+fn pledge_consumed_in_inputs(pledge_code_hash: &[u8; 32]) -> Result<bool, i8> {
+    for i in 0.. {
+        match load_cell_type(i, Source::Input) {
+            Ok(Some(type_script)) => {
+                if type_script.code_hash().raw_data().as_ref() == &pledge_code_hash[..] {
+                    return Ok(true);
+                }
+            }
+            Ok(None) => continue,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_DATA),
+        }
+    }
+    Ok(false)
+}
+
 /// D-12: During refund, verify refund amount matches receipt's stored pledge_amount,
 /// and output goes to backer_lock_hash from receipt data.
 fn validate_receipt_destruction() -> i8 {
+    // M-02: the paired pledge cell must be consumed in the same transaction
+    let pledge_code_hash = match pledge_code_hash_from_args() {
+        Ok(h) => h,
+        Err(code) => return code,
+    };
+    match pledge_consumed_in_inputs(&pledge_code_hash) {
+        Ok(true) => {}
+        Ok(false) => {
+            debug!("Receipt destruction: no pledge cell consumed in inputs");
+            return ERROR_NO_PLEDGE_CONSUMED;
+        }
+        Err(code) => return code,
+    }
+
     // Load the receipt being destroyed
     let receipt_data = match load_cell_data(0, Source::GroupInput) {
         Ok(d) => d,

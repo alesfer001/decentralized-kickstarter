@@ -8,6 +8,12 @@ export interface CreatorLockScript {
 }
 
 export interface Campaign {
+  /**
+   * The campaign's creation tx hash. Stable for the life of the campaign, unlike
+   * `txHash` — since v1.2 the campaign cell's out point moves with every pledge.
+   * Pledges record this as their campaign_id, which is how the indexer links them.
+   */
+  originalTxHash?: string;
   campaignId: string;
   creator: string;
   creatorLockScript?: CreatorLockScript | null;

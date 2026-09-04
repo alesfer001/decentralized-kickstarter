@@ -43,19 +43,25 @@ export class IndexerAPI {
         const currentBlock = await this.indexer.getCurrentBlockNumber();
 
         const serialized = campaigns.map((c) => {
-          const calculatedPledged = this.indexer.calculateTotalPledged(c);
+          // v1.2: total_pledged is a real on-chain accumulator, so the campaign cell is
+          // the source of truth. calculateTotalPledged() summed live pledge cells (falling
+          // back to receipts once they were consumed) only because the cell held 0.
+          const totalPledged = c.totalPledged;
           const effectiveStatus = this.computeEffectiveStatus(
-            c.status, c.deadlineBlock, calculatedPledged, c.fundingGoal, currentBlock
+            c.status, c.deadlineBlock, totalPledged, c.fundingGoal, currentBlock
           );
           return {
             campaignId: c.id,
+            // Stable across the campaign's life; the campaign cell's out point is not.
+            // Pledges record this as their campaign_id, which is how they stay linked.
+            originalTxHash: c.originalTxHash || c.txHash,
             creator: c.creatorLockHash,
             creatorLockScript: c.creatorLockScript || null,
             title: c.title,
             description: c.description,
             fundingGoal: c.fundingGoal.toString(),
             deadlineBlock: c.deadlineBlock.toString(),
-            totalPledged: calculatedPledged.toString(),
+            totalPledged: totalPledged.toString(),
             status: c.status,
             effectiveStatus,
             txHash: c.txHash,
@@ -81,21 +87,22 @@ export class IndexerAPI {
           return res.status(404).json({ error: "Campaign not found" });
         }
 
-        const calculatedPledged = this.indexer.calculateTotalPledged(campaign);
+        const totalPledged = campaign.totalPledged;
         const currentBlock = await this.indexer.getCurrentBlockNumber();
         const effectiveStatus = this.computeEffectiveStatus(
-          campaign.status, campaign.deadlineBlock, calculatedPledged, campaign.fundingGoal, currentBlock
+          campaign.status, campaign.deadlineBlock, totalPledged, campaign.fundingGoal, currentBlock
         );
 
         const serialized = {
           campaignId: campaign.id,
+          originalTxHash: campaign.originalTxHash || campaign.txHash,
           creator: campaign.creatorLockHash,
           creatorLockScript: campaign.creatorLockScript || null,
           title: campaign.title,
           description: campaign.description,
           fundingGoal: campaign.fundingGoal.toString(),
           deadlineBlock: campaign.deadlineBlock.toString(),
-          totalPledged: calculatedPledged.toString(),
+          totalPledged: totalPledged.toString(),
           status: campaign.status,
           effectiveStatus,
           txHash: campaign.txHash,

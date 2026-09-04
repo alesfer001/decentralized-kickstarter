@@ -19,6 +19,13 @@
  * Run with: npx ts-node test-v1.1-lifecycle.ts
  */
 
+/**
+ * NOTE (v1.2 Phase 8): a createPledgeWithReceipt transaction now also consumes and
+ * re-creates the campaign cell, so its outputs are [campaign, pledge, receipt] — the
+ * pledge moved from index 0 to index 1. The indices below were updated for that but this
+ * script has NOT been re-run since; see test-phase8-accumulator.ts for the verified path.
+ */
+
 import * as fs from "fs";
 import * as path from "path";
 import { ccc } from "@ckb-ccc/core";
@@ -185,10 +192,10 @@ async function testSuccessWithPermissionlessRelease() {
   console.log("\n5. Third party triggers permissionless release");
   // Get pledge cell capacity from chain
   const pledgeTxInfo = await client.getTransaction(pledgeTxHash);
-  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[0].capacity);
+  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[1].capacity);
 
   const releaseTxHash = await builder.permissionlessRelease(triggerSigner, {
-    pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
+    pledgeOutPoint: { txHash: pledgeTxHash, index: 1 },
     pledgeCapacity,
     campaignCellDep: { txHash: finalizeTxHash, index: 0 },
     creatorLockScript: {
@@ -281,10 +288,10 @@ async function testFailureWithPermissionlessRefund() {
   // Step 5: Backer triggers permissionless refund (receipt-free since v1.1 hardening)
   console.log("\n5. Backer triggers permissionless refund");
   const pledgeTxInfo = await client.getTransaction(pledgeTxHash);
-  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[0].capacity);
+  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[1].capacity);
 
   const refundTxHash = await builder.permissionlessRefund(backerSigner, {
-    pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
+    pledgeOutPoint: { txHash: pledgeTxHash, index: 1 },
     pledgeCapacity,
     campaignCellDep: { txHash: finalizeTxHash, index: 0 },
     backerLockScript: {
@@ -364,8 +371,8 @@ async function testMergeThenRelease() {
   const pledgeOutPoints: Array<{ txHash: string; index: number }> = [];
   for (const txHash of pledgeTxHashes) {
     const txInfo = await client.getTransaction(txHash);
-    pledgeCapacities.push(BigInt(txInfo!.transaction!.outputs[0].capacity));
-    pledgeOutPoints.push({ txHash, index: 0 });
+    pledgeCapacities.push(BigInt(txInfo!.transaction!.outputs[1].capacity));
+    pledgeOutPoints.push({ txHash, index: 1 });
   }
 
   const pledgeLockArgs = serializePledgeLockArgs(campaignTypeScriptHash, deadline, backerLockHash);

@@ -5,6 +5,13 @@
  * Run with: npx ts-node test-lifecycle.ts
  */
 
+/**
+ * NOTE (v1.2 Phase 8): a createPledgeWithReceipt transaction now also consumes and
+ * re-creates the campaign cell, so its outputs are [campaign, pledge, receipt] — the
+ * pledge moved from index 0 to index 1. The indices below were updated for that but this
+ * script has NOT been re-run since; see test-phase8-accumulator.ts for the verified path.
+ */
+
 import { ccc } from "@ckb-ccc/core";
 import { TransactionBuilder } from "./src";
 import type { ContractInfo } from "./src/types";
@@ -391,7 +398,7 @@ async function testNonCreatorPermissionlessFinalization() {
 
   // Get pledge cell capacity and finalized campaign outpoint
   const pledgeTx = await client.getTransaction(pledgeTxHash);
-  const pledgeOutput = pledgeTx!.transaction!.outputs[0];
+  const pledgeOutput = pledgeTx!.transaction!.outputs[1];
   const pledgeCapacity = BigInt(pledgeOutput.capacity);
 
   // Get the creator's actual lock script (not just the hash)
@@ -405,7 +412,7 @@ async function testNonCreatorPermissionlessFinalization() {
   let releaseTxHash: string;
   try {
     releaseTxHash = await builder.permissionlessRelease(backerSigner, {
-      pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
+      pledgeOutPoint: { txHash: pledgeTxHash, index: 1 },
       pledgeCapacity,
       campaignCellDep: { txHash: finalizeTxHash, index: 0 },
       creatorLockScript,
@@ -529,14 +536,14 @@ async function testPermissionlessRefundLifecycle() {
 
   // Get pledge and receipt cell capacities
   const pledgeTx = await client.getTransaction(pledgeTxHash);
-  const pledgeOutput = pledgeTx!.transaction!.outputs[0];
+  const pledgeOutput = pledgeTx!.transaction!.outputs[1];
   const pledgeCapacity = BigInt(pledgeOutput.capacity);
   // Receipt is output[1] in createPledgeWithReceipt
-  const receiptOutput = pledgeTx!.transaction!.outputs[1];
+  const receiptOutput = pledgeTx!.transaction!.outputs[2];
   const receiptCapacity = BigInt(receiptOutput.capacity);
 
   const refundTxHash = await builder.permissionlessRefund(backerSigner, {
-    pledgeOutPoint: { txHash: pledgeTxHash, index: 0 },
+    pledgeOutPoint: { txHash: pledgeTxHash, index: 1 },
     pledgeCapacity,
     receiptOutPoint: { txHash: pledgeTxHash, index: 1 },
     receiptCapacity,

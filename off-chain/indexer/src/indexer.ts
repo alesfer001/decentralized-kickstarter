@@ -124,7 +124,13 @@ function createCkbClient(rpcUrl: string): ccc.Client {
  * Indexer for Campaign and Pledge cells
  * Uses SQLite for persistence and background polling for updates.
  */
+/** Safety bound on walking a campaign cell's update history back to its creation tx. */
+const MAX_CAMPAIGN_HISTORY_HOPS = 5000;
+
 export class CampaignIndexer {
+  /** Campaign type script hash -> creation tx hash. Fixed for the life of a campaign. */
+  private originalTxHashByType: Map<string, string> = new Map();
+
   private client: ccc.Client;
   private rpcUrl: string;
   private db: Database;
@@ -174,18 +180,38 @@ export class CampaignIndexer {
   /**
    * Look up the original campaign txHash for a finalized campaign.
    */
-  private async getOriginalTxHash(finalizationTxHash: string): Promise<string | undefined> {
-    try {
-      const txWithStatus = await this.client.getTransaction(finalizationTxHash);
-      if (!txWithStatus || !txWithStatus.transaction) return undefined;
+  private async getOriginalTxHash(
+    currentTxHash: string,
+    campaignTypeHash: string
+  ): Promise<string | undefined> {
+    const cached = this.originalTxHashByType.get(campaignTypeHash);
+    if (cached) return cached;
 
-      const tx = txWithStatus.transaction;
-      if (tx.inputs.length > 0) {
-        const firstInput = tx.inputs[0];
-        return firstInput.previousOutput?.txHash;
+    try {
+      // Walk back through the chain of campaign-cell updates to the creation transaction.
+      // Before v1.2 there was at most one hop (the finalization), so a single step sufficed.
+      // Now every pledge consumes and re-creates the campaign cell, so the chain is as long
+      // as the campaign has backers. Every such transaction puts the campaign cell first.
+      let txHash = currentTxHash;
+      for (let hop = 0; hop < MAX_CAMPAIGN_HISTORY_HOPS; hop++) {
+        const txWithStatus = await this.client.getTransaction(txHash);
+        const previous = txWithStatus?.transaction?.inputs?.[0]?.previousOutput;
+        if (!previous) break;
+
+        const previousTx = await this.client.getTransaction(previous.txHash);
+        const previousOutput =
+          previousTx?.transaction?.outputs?.[Number(previous.index)];
+        if (!previousOutput?.type) break;
+        if (ccc.Script.from(previousOutput.type).hash() !== campaignTypeHash) break;
+
+        txHash = previous.txHash;
       }
+
+      // The TypeID is fixed for the life of a campaign, so this only has to be walked once.
+      this.originalTxHashByType.set(campaignTypeHash, txHash);
+      return txHash;
     } catch (error) {
-      console.error(`Failed to look up original txHash for ${finalizationTxHash}:`, error);
+      console.error(`Failed to look up original txHash for ${currentTxHash}:`, error);
     }
     return undefined;
   }
@@ -241,10 +267,11 @@ export class CampaignIndexer {
         const data = parseCampaignData(cell.outputData);
         const blockNumber = await this.getBlockNumberForTx(cell.outPoint.txHash);
 
-        let originalTxHash: string | undefined;
-        if (data.status !== CampaignStatus.Active) {
-          originalTxHash = await this.getOriginalTxHash(cell.outPoint.txHash);
-        }
+        // v1.2: resolve this for every campaign, not just finalized ones. The campaign
+        // cell's out point moves on every pledge, and the creation tx hash is what pledges
+        // and receipts are linked by.
+        const campaignTypeHash = ccc.Script.from(cell.cellOutput.type!).hash();
+        const originalTxHash = await this.getOriginalTxHash(cell.outPoint.txHash, campaignTypeHash);
 
         // Extract creator lock script by finding an output whose lock hash matches creatorLockHash.
         // For finalized campaigns, the creator's lock is only in the original creation tx
@@ -526,6 +553,12 @@ export class CampaignIndexer {
   /**
    * Calculate total pledged for a campaign by summing all pledges
    */
+  /**
+   * @deprecated Since v1.2 the campaign cell carries total_pledged as an on-chain
+   * accumulator; read `campaign.totalPledged` instead. This reconstruction from live
+   * pledge cells (with a receipt fallback once they are consumed) existed only because
+   * the cell held 0. Kept for one release as a cross-check against the cell value.
+   */
   calculateTotalPledged(campaign: Campaign): bigint {
     const linkageHash = this.getPledgeLinkageTxHash(campaign).toLowerCase();
     const linkageId = `${linkageHash}_0`;
@@ -566,7 +599,17 @@ export class CampaignIndexer {
    */
   getCampaign(id: string): Campaign | undefined {
     const row = this.db.getCampaign(id);
-    return row ? this.dbToCampaign(row) : undefined;
+    if (row) return this.dbToCampaign(row);
+
+    // The id is an out point, and since v1.2 a campaign's out point moves with every
+    // pledge — so any id a client is holding goes stale the moment someone else backs the
+    // campaign. Fall back to matching on the creation tx hash, which never moves, so a
+    // bookmarked or in-flight link still resolves to the campaign it named.
+    const txHash = (id.includes("_") ? id.split("_")[0] : id).toLowerCase();
+    const match = this.db
+      .getAllCampaigns()
+      .find((c) => (c.original_tx_hash || c.tx_hash).toLowerCase() === txHash);
+    return match ? this.dbToCampaign(match) : undefined;
   }
 
   /**
