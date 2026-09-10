@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Campaign } from "@/lib/types";
-import { fetchCampaigns, fetchBlockNumber, checkHealth } from "@/lib/api";
+import { Campaign, IndexerPhase } from "@/lib/types";
+import { fetchCampaigns, fetchBlockNumber } from "@/lib/api";
 import { CampaignCard } from "@/components/CampaignCard";
 import { SkeletonCard } from "@/components/Skeleton";
+import { useIndexerReady, IndexerStatusBadge, IndexerWaitNotice } from "@/components/IndexerStatus";
 import Link from "next/link";
 
 /**
@@ -53,21 +54,13 @@ export default function Home() {
   const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [apiOnline, setApiOnline] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<string>("All");
+  const { phase: indexerPhase, elapsedSeconds, retry: retryIndexer } = useIndexerReady();
+  const indexerReady = indexerPhase === IndexerPhase.Ready;
 
   const load = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     setError(null);
-
-    const isOnline = await checkHealth();
-    setApiOnline(isOnline);
-
-    if (!isOnline) {
-      setError("Indexer API is offline. Make sure it's running on port 3001.");
-      if (!isRefresh) setLoading(false);
-      return;
-    }
 
     try {
       const [campaignsData, blockNum] = await Promise.all([
@@ -84,15 +77,22 @@ export default function Home() {
     }
   }, []);
 
+  // Hold the first load until the indexer has woken up and synced,
+  // otherwise an empty database reads as "no campaigns"
   useEffect(() => {
+    if (!indexerReady) return;
     load();
-  }, [load]);
+  }, [indexerReady, load]);
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
+    if (!indexerReady) return;
     const interval = setInterval(() => load(true), 30000);
     return () => clearInterval(interval);
-  }, [load]);
+  }, [indexerReady, load]);
+
+  const showSkeletons = indexerReady ? loading : indexerPhase !== IndexerPhase.Offline;
+  const showContent = indexerReady && !loading;
 
   return (
     <div>
@@ -111,19 +111,14 @@ export default function Home() {
         </Link>
       </div>
 
-      {/* API Status */}
-      <div className="mb-6 flex items-center gap-2">
-        <div
-          className={`w-2 h-2 rounded-full ${
-            apiOnline ? "bg-green-500" : "bg-red-500"
-          }`}
-        />
-        <span className="text-sm text-zinc-600 dark:text-zinc-400">
-          Indexer API: {apiOnline ? "Online" : "Offline"}
-        </span>
+      {/* Indexer Status */}
+      <div className="mb-6">
+        <IndexerStatusBadge phase={indexerPhase} />
       </div>
 
-      {loading && (
+      <IndexerWaitNotice phase={indexerPhase} elapsedSeconds={elapsedSeconds} onRetry={retryIndexer} />
+
+      {showSkeletons && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[1, 2, 3].map((i) => (
             <SkeletonCard key={i} />
@@ -131,13 +126,13 @@ export default function Home() {
         </div>
       )}
 
-      {error && !loading && (
+      {showContent && error && (
         <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4">
           <p className="text-red-800 dark:text-red-200">{error}</p>
         </div>
       )}
 
-      {!loading && !error && campaigns.length === 0 && (
+      {showContent && !error && campaigns.length === 0 && (
         <div className="text-center py-12 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg">
           <p className="text-zinc-600 dark:text-zinc-400 mb-4">
             No campaigns found. Be the first to create one!
@@ -151,7 +146,7 @@ export default function Home() {
         </div>
       )}
 
-      {!loading && !error && campaigns.length > 0 && (
+      {showContent && !error && campaigns.length > 0 && (
         <div>
           {/* Filter Tabs */}
           <div className="mb-6 flex flex-wrap gap-2">

@@ -1,4 +1,4 @@
-import { Campaign, Pledge, Receipt } from "./types";
+import { Campaign, IndexerStatus, Pledge, Receipt } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -98,11 +98,24 @@ export async function fetchBlockNumber(): Promise<bigint> {
   return BigInt(data.blockNumber);
 }
 
-export async function checkHealth(): Promise<boolean> {
+/** A status check that hangs longer than this counts as unreachable */
+const STATUS_TIMEOUT_MS = 10000;
+
+/**
+ * Check whether the indexer is up and has finished its first sync.
+ * Indexers that predate the `ready` flag don't send it and are treated as ready.
+ */
+export async function fetchIndexerStatus(): Promise<IndexerStatus> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS);
   try {
-    const res = await apiFetch(`${API_BASE}/status`);
-    return res.ok;
+    const res = await apiFetch(`${API_BASE}/status`, { signal: controller.signal });
+    if (!res.ok) return IndexerStatus.Unreachable;
+    const data = await res.json();
+    return data.ready === false ? IndexerStatus.Syncing : IndexerStatus.Ready;
   } catch {
-    return false;
+    return IndexerStatus.Unreachable;
+  } finally {
+    clearTimeout(timeout);
   }
 }

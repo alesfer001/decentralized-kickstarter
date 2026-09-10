@@ -31,9 +31,11 @@ export class IndexerAPI {
       res.json({ status: "ok", timestamp: Date.now() });
     });
 
-    // Status — same as /health but with a name ad-blockers don't denylist
+    // Status — like /health but with a name ad-blockers don't denylist.
+    // `ready` stays false until the first full index lands, so the frontend
+    // can show "syncing" instead of an empty campaign list.
     this.app.get("/status", (req, res) => {
-      res.json({ status: "ok", timestamp: Date.now() });
+      res.json({ status: "ok", ready: this.indexer.isReady(), timestamp: Date.now() });
     });
 
     // Get all campaigns

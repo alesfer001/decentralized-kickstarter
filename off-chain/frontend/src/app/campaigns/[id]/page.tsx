@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ccc } from "@ckb-ccc/connector-react";
-import { Campaign, Pledge, CampaignStatus, Receipt, PledgeDistributionStatus } from "@/lib/types";
+import { Campaign, Pledge, CampaignStatus, Receipt, PledgeDistributionStatus, IndexerPhase } from "@/lib/types";
 import { fetchCampaign, fetchPledgesForCampaign, fetchBlockNumber, fetchReceiptsForCampaign } from "@/lib/api";
 import {
   shannonsToCKB,
@@ -27,6 +27,7 @@ import { u64ToHexLE, serializeMetadataHex } from "@/lib/serialization";
 import { useDevnet } from "@/components/DevnetContext";
 import { useToast } from "@/components/Toast";
 import { SkeletonDetailPage } from "@/components/Skeleton";
+import { useIndexerReady, IndexerWaitNotice } from "@/components/IndexerStatus";
 
 type PledgeSortMode = "recent" | "amount";
 
@@ -84,6 +85,7 @@ export default function CampaignDetailPage() {
   const walletSigner = ccc.useSigner();
   const { isDevnet, devnetSigner } = useDevnet();
   const { toast } = useToast();
+  const { phase: indexerPhase, elapsedSeconds, retry: retryIndexer } = useIndexerReady();
 
   const signer = isDevnet ? devnetSigner : walletSigner;
 
@@ -160,15 +162,19 @@ export default function CampaignDetailPage() {
     }
   }, [campaignId]);
 
+  // Hold the first load until the indexer has synced, otherwise a
+  // shared link opened during a cold start reads as "Campaign not found"
   useEffect(() => {
+    if (indexerPhase !== IndexerPhase.Ready) return;
     loadData();
-  }, [loadData]);
+  }, [indexerPhase, loadData]);
 
   // Auto-refresh every 15 seconds
   useEffect(() => {
+    if (indexerPhase !== IndexerPhase.Ready) return;
     const interval = setInterval(() => loadData(true), 15000);
     return () => clearInterval(interval);
-  }, [loadData]);
+  }, [indexerPhase, loadData]);
 
   // Poll for changes after a transaction
   async function pollForChange(checkFn: () => Promise<boolean>, maxAttempts = 15) {
@@ -785,6 +791,15 @@ export default function CampaignDetailPage() {
     // recent: by createdAt block descending
     return Number(BigInt(b.createdAt) - BigInt(a.createdAt));
   });
+
+  if (indexerPhase !== IndexerPhase.Ready) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <IndexerWaitNotice phase={indexerPhase} elapsedSeconds={elapsedSeconds} onRetry={retryIndexer} />
+        {indexerPhase !== IndexerPhase.Offline && <SkeletonDetailPage />}
+      </div>
+    );
+  }
 
   if (loading) {
     return <SkeletonDetailPage />;

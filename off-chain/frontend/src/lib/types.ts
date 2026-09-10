@@ -32,6 +32,31 @@ export enum CampaignStatus {
 }
 
 /**
+ * Indexer availability as reported by its /status endpoint
+ */
+export enum IndexerStatus {
+  Ready = "ready",
+  /** Up, but the first chain sync since boot hasn't finished */
+  Syncing = "syncing",
+  /** No answer, an error status, or a timeout */
+  Unreachable = "unreachable",
+}
+
+/**
+ * Where a page stands while it waits for the indexer
+ */
+export enum IndexerPhase {
+  /** First status request still in flight */
+  Checking = "checking",
+  /** No answer yet; free hosting spins the service down when idle */
+  Waking = "waking",
+  Syncing = "syncing",
+  Ready = "ready",
+  /** No answer for longer than the give-up window */
+  Offline = "offline",
+}
+
+/**
  * Pledge data from the indexer API
  */
 export interface Pledge {
