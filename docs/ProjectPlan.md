@@ -1391,6 +1391,8 @@ Past v1.1 (trustless distribution + automatic finalization bot, both verified on
 #### v1.4 — User Dashboard & UI/UX Improvements
 Creator dashboard ("My campaigns" — list, status, raised, action links), backer dashboard ("My pledges" — list, status, outcomes, claim links), indexer endpoints for wallet-aware queries, mobile responsiveness QA, onboarding polish.
 
+**Superseded 2026-09-10:** the bundle below was split after the DIS stalled. v1.3 + v1.4 plus the rest of Phase 8 now form a ~$5k testnet productisation proposal; fees/treasury (v1.2 Phases 9-11), audit and mainnet move to a later proposal. See the 2026-09-10 entry.
+
 **Bundled into the grant proposal.** v1.2, v1.3, and v1.4 are all bundled into the CKB Community Fund DAO grant ask as a single "mainnet launch" milestone (decided 2026-06-01). Rationale: a grant should mean shipping to mainnet, mainnet requires a legally-safe name, and a credible product surface requires the dashboards. Cannot reasonably split into separate proposals.
 
 #### v1.5+ — Platform Token, Governance, Staking
@@ -1675,6 +1677,26 @@ Also: 10 unit tests in the campaign contract (data round-trip, status-vs-goal ju
 **Landed on branch `v1.2-phase8-accumulator`, not merged.** Twenty-two files across all five contracts and every off-chain package; kept off `main` so the whole of Phase 8 stays reviewable as one diff for Scalebit. Commit `1550a56`.
 
 **Week 26 progress report published** to https://github.com/RickSoze001/ckb-builder-progress-report/blob/main/Week_26.md, matching the terse house format of Weeks 23-25 (headline plus three supporting lines per group, no internal issue IDs, no mechanism detail).
+
+**2026-09-10:** Grant rescoped after the DIS stalled — testnet productisation first, mainnet + audit later
+
+The `[DIS]` (topic 10609) finished at 16 of the 30 likes needed in its week and never reached a vote. Neon's read (Telegram, 2026-09-04):
+- Momentum was lost to the long gap between the original discussion thread and the proposal.
+- Resubmit, but with material changes: drop the audit request, focus on functionality and features on testnet, keep the total around **$5k**.
+- "Productise" the app so the community can see it has direction.
+- The forum's language toggle is enough; a manual Chinese translation is no longer necessary. This overrides the 2026-09-01 theory that the missing translation cost the likes.
+
+**Decisions:**
+- **Two proposals instead of one bundle.** The $15k "mainnet launch" bundle is retired. A ~$5k testnet productisation proposal goes first; a mainnet + audit proposal follows once there is usage to point at. The later proposal can carry a firm Scalebit invoice instead of the $7k extrapolation, since Scalebit cannot quote v1.2 until its code is final.
+- **Fee, config cell and treasury (old Phases 9-11) move to the mainnet proposal.** Fees only matter once real money moves, and the new pledge-lock fee code needs the audit before mainnet in any case. The 5% / config cell / multisig design stays locked; only its timing moves.
+- **The CrowdCell rebrand moves into the $5k proposal.** A product identity is part of what "productise" means, and it avoids pitching again under the Kickstarter name.
+- **Resubmit after a visible change, not before.** Target ~2-3 weeks: Phase 8 live on testnet and at least one product change shipped, so the post shows momentum rather than promising it. Keep the gap between the project-thread update and the DIS short, and line up likes before the one-week clock starts. Bilingual title still worth doing since it costs nothing.
+
+**New order of work:**
+1. Finish Phase 8 on testnet: contract redeploy, frontend pledge-contention retry.
+2. Productisation: CrowdCell rebrand, a proper landing page (**Cellgrid** direction chosen 2026-09-10 from three Fable mockups: CKB cells as the visual system, cell-meter on `CampaignCard`, animated canvas grid behind the hero (kept, not trimmed), settlement diagram, "who can do what" permission matrix. Fixes before building: the matrix must show creators *can* pledge, anyone can finalize when the status verifies, and the grace-period fail-safe is open to anyone after the grace period; drop the stale "65 B header" line; no em dashes or arrows in copy. Mockups in `docs/design/landing/` (local, `docs/` is gitignored). **Poster** direction kept there as the pivot option if the audience shifts to general backers, e.g. after RGB++), creator and backer dashboards, an indexer cold-start experience that says it is waking up instead of "Offline", and the UX gaps from the Phase 8 browser run (deadline timezone bug, silent 1-hour minimum deadline, "Destroy Campaign" button shown ~180 days before it can succeed). Final feature list pending Neon's answer on what felt missing.
+3. Rewrite `docs/grant/PROPOSAL.md` for the $5k testnet scope and post the new `[DIS]`.
+4. Later proposal: fee enforcement, config cell, multisig treasury, Scalebit audit, mainnet launch.
 
 **2026-04-20:** Testnet Redeployment — Phase 16 Hardened Contracts
 - Deployed all 5 hardened contracts to CKB testnet (Pudge):
