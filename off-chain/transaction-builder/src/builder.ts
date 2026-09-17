@@ -21,7 +21,9 @@ function isStaleCellError(err: unknown): boolean {
     message.includes("dead cell") ||
     message.includes("deadcell") ||
     message.includes("unknown output") ||
-    message.includes("resolve failed")
+    message.includes("resolve failed") ||
+    // The winner is still in the pool: the node treats the loser as a failed replace-by-fee
+    message.includes("poolrejectedrbf")
   );
 }
 
