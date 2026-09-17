@@ -363,7 +363,11 @@ export class TransactionBuilder {
       scriptSearchMode: "exact" as const,
     };
 
-    for await (const cell of this.client.findCells(searchKey, "asc", 1)) {
+    // Query the chain, not the client cache. The cache remembers cells created by this
+    // client's own transactions, so after this wallet pledged, it would keep returning the
+    // campaign cell that pledge created even once someone else (another backer, the bot's
+    // finalization) has spent it.
+    for await (const cell of this.client.findCellsOnChain({ ...searchKey, withData: true }, "asc", 1)) {
       return cell;
     }
     throw new Error(`No live campaign cell for type args ${campaignTypeArgs}`);

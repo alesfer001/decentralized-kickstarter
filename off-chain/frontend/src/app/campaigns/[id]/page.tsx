@@ -78,8 +78,10 @@ async function resolveLiveCampaignCell(client: any, campaignId: string) {
   }
   const typeScript = ccc.Script.from(knownOutput.type);
 
-  for await (const cell of client.findCells(
-    { script: typeScript, scriptType: "type" as const, scriptSearchMode: "exact" as const },
+  // Query the chain, not the client cache: the cache keeps returning a campaign cell this
+  // wallet created (by pledging) even after another pledge or the bot's finalization spent it
+  for await (const cell of client.findCellsOnChain(
+    { script: typeScript, scriptType: "type" as const, scriptSearchMode: "exact" as const, withData: true },
     "asc",
     1
   )) {
