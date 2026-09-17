@@ -1698,6 +1698,13 @@ The `[DIS]` (topic 10609) finished at 16 of the 30 likes needed in its week and 
 3. Rewrite `docs/grant/PROPOSAL.md` for the $5k testnet scope and post the new `[DIS]`.
 4. Later proposal: fee enforcement, config cell, multisig treasury, Scalebit audit, mainnet launch.
 
+**2026-09-17:** Testnet redeploy — v1.2 Phase 8 + fund-routing fixes
+
+- Reclaimed the five v1.1 contract cells (tx `0x4ad88d73…43c6`, 130,497 CKB) to fund the deploy; deployer went from 22.7k to 153.2k CKB.
+- Deployed all five contracts (binaries verified identical to the devnet-tested build by data hash); hashes in `deployment/deployed-contracts-testnet.json`.
+- Vercel: 10 `NEXT_PUBLIC_*_CODE_HASH/_TX_HASH` production vars updated and verified via `vercel env pull`; production deployed from the `v1.2-phase8-accumulator` branch (PR #2, review requested from Officeyutong; merge to `main` pending).
+- Render indexer: env vars and redeploy need the dashboard.
+
 **2026-09-17:** Fund-routing fixes from a balance accounting test (contracts changed, devnet only)
 
 Triggered by a question on whether wallet balances add up across a pledge. `test-accounting.ts` now reads both wallets before and after every step, takes each fee from inputs minus outputs, and asserts the deltas to the shannon. The arithmetic was exact, but it exposed two design problems, and reading the code around them found two exploits. Both exploits were reproduced against the deployed devnet contracts before fixing (`test-v1.2-exploits.ts`).
