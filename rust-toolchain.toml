@@ -1,0 +1,10 @@
+# Pinned so contract binaries stay reproducible — the deployed code hash is only
+# meaningful if everyone building it gets the same bytes. 1.94.0 (LLVM 21) is the
+# toolchain the v1.1 testnet binaries were built with.
+#
+# Do not float this to `stable` without rebuilding and redeploying: rustc 1.98
+# (LLVM 22) fails outright on `-C target-feature=-a`, which CKB-VM requires,
+# with "Cannot select AtomicLoadAdd" in the `bytes` crate.
+[toolchain]
+channel = "1.94.0"
+targets = ["riscv64imac-unknown-none-elf"]

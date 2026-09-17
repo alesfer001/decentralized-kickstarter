@@ -1,4 +1,5 @@
 import { CampaignStatus, Pledge, PledgeDistributionStatus } from "./types";
+import { PLEDGE_CELL_OVERHEAD, RECEIPT_CELL_CAPACITY } from "./constants";
 
 /**
  * Convert shannons to CKB (1 CKB = 10^8 shannons)
@@ -247,35 +248,32 @@ export function getDistributionTriggerState(
 }
 
 /**
- * Cost breakdown for pledge creation
- * Pledge cell capacity + receipt cell capacity + estimated fee
- * Values returned in shannons (1 CKB = 100,000,000 shannons)
+ * Cost breakdown for pledge creation, in shannons (1 CKB = 100,000,000 shannons).
+ *
+ * Only the pledge amount (if the campaign succeeds) and the fee are spent. The two deposits
+ * pay for on-chain storage and come back to the backer: the pledge deposit when the pledge
+ * is released or refunded, the receipt deposit when the backer reclaims the receipt after
+ * the campaign is finalized.
  */
 export interface CostBreakdown {
-  pledgeCellCapacity: bigint;
-  receiptCellCapacity: bigint;
+  pledgeAmount: bigint;
+  pledgeDeposit: bigint;
+  receiptDeposit: bigint;
   estimatedFee: bigint;
-  totalCost: bigint;
+  /** Everything that leaves the wallet when the pledge is made */
+  totalFromWallet: bigint;
 }
 
 export function calculateCostBreakdown(pledgeAmountCkb: number | string): CostBreakdown {
-  const pledgeAmountShannons =
-    BigInt(Math.floor(Number(pledgeAmountCkb || 0) * 100000000));
-
-  const PLEDGE_CELL_BASE = BigInt(Math.max(Math.ceil((8 + 72 + 65 + 105) * 1.2), 61)) * BigInt(100000000);
-  const pledgeCellCapacity = PLEDGE_CELL_BASE + pledgeAmountShannons;
-
-  const receiptCellCapacity = BigInt(Math.max(Math.ceil((8 + 40 + 65 + 65) * 1.2), 61)) * BigInt(100000000);
-
+  const pledgeAmount = BigInt(Math.floor(Number(pledgeAmountCkb || 0) * 100000000));
   const estimatedFee = BigInt(1000);
 
-  const totalCost = pledgeCellCapacity + estimatedFee;
-
   return {
-    pledgeCellCapacity,
-    receiptCellCapacity,
+    pledgeAmount,
+    pledgeDeposit: PLEDGE_CELL_OVERHEAD,
+    receiptDeposit: RECEIPT_CELL_CAPACITY,
     estimatedFee,
-    totalCost,
+    totalFromWallet: pledgeAmount + PLEDGE_CELL_OVERHEAD + RECEIPT_CELL_CAPACITY + estimatedFee,
   };
 }
 

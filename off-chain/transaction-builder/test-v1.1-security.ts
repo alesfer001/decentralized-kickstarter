@@ -1,348 +1,186 @@
 /**
  * v1.1 Security Attack Scenario Tests
  *
- * Validates that hardened contracts (Officeyutong review fixes) correctly
- * REJECT malicious transactions. Each test crafts an attack transaction
- * and expects it to fail on-chain.
+ * Validates that the hardened contracts (Officeyutong review fixes) REJECT malicious
+ * transactions. Every attack is submitted to the chain and must fail with the specific
+ * script and error code below; a local builder error or any other rejection is a FAIL.
  *
  * Attack scenarios:
- *   1. Fail-safe backdoor: refund without campaign cell_dep on Success → REJECTED
- *   2. Campaign destruction: destroy Success campaign within grace period → REJECTED
- *   3. Premature finalization: finalize with since < deadline → REJECTED
+ *   1. Fail-safe backdoor: refund a Success campaign's pledge without the campaign cell_dep
+ *      -> pledge-lock ERROR_CAMPAIGN_CELL_DEP_MISSING (21)
+ *   2. Campaign destruction: destroy a Success campaign (paying the creator) within the
+ *      grace period -> campaign type ERROR_DESTRUCTION_NOT_ALLOWED (13)
+ *   3. Premature finalization: finalize a funded campaign with a mature since below the
+ *      deadline -> campaign-lock ERROR_SINCE_BELOW_DEADLINE (13)
  *
  * Prerequisites:
- *   1. OffCKB devnet running (offckb node)
+ *   1. OffCKB devnet running (nvm use v18 && offckb node)
  *   2. All 5 contracts deployed (npx ts-node deploy-contracts.ts)
  *
  * Run with: npx ts-node test-v1.1-security.ts
  */
 
-import * as fs from "fs";
-import * as path from "path";
 import { ccc } from "@ckb-ccc/core";
-import { TransactionBuilder } from "./src";
-import type { ContractInfo } from "./src/types";
 import { CampaignStatus } from "./src/types";
-import { createCkbClient } from "./src/ckbClient";
+import { withCampaignStatus } from "./src/serializer";
+import {
+  CKB,
+  Checks,
+  setupDevnet,
+  waitForTx,
+  waitForBlock,
+  campaignTypeArgs,
+  outputOf,
+  lockLike,
+} from "./test-helpers";
 
-const rpcUrl = "http://127.0.0.1:8114";
+const checks = new Checks();
 
-// Devnet test accounts (OffCKB pre-funded)
-const creatorKey = "0x6109170b275a09ad54877b82f7d9930f88cab5717d484fb4741ae9d1dd078cd6";
-const backerKey = "0x9f315d5a9618a39fdc487c7a67a8581d40b045bd7a42d83648ca80ef3b2cb4a1";
-const triggerKey = "0xd00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc";
+type Devnet = Awaited<ReturnType<typeof setupDevnet>>;
 
-// Load deployment artifacts
-let campaignContract: ContractInfo;
-let campaignLockContract: ContractInfo;
-let pledgeContract: ContractInfo;
-let pledgeLockContract: ContractInfo;
-let receiptContract: ContractInfo;
+/** Create a campaign with goal 100 CKB and a 150 CKB pledge, optionally finalized */
+async function setupFundedCampaign(d: Devnet, blocksToDeadline: bigint, finalize: boolean) {
+  const goal = 100n * CKB;
+  const amount = 150n * CKB;
+  const deadline = BigInt(await d.client.getTip()) + blocksToDeadline;
 
-try {
-  const deploymentPath = path.resolve(__dirname, "../../deployment/deployed-contracts-devnet.json");
-  const deployment = JSON.parse(fs.readFileSync(deploymentPath, "utf-8"));
-  campaignContract = { ...deployment.campaign, hashType: "data2" as const };
-  campaignLockContract = { ...deployment.campaignLock, hashType: "data2" as const };
-  pledgeContract = { ...deployment.pledge, hashType: "data2" as const };
-  pledgeLockContract = { ...deployment.pledgeLock, hashType: "data2" as const };
-  receiptContract = { ...deployment.receipt, hashType: "data2" as const };
-  console.log("Loaded contract info from deployment artifact");
-} catch {
-  console.error("ERROR: Could not load deployment/deployed-contracts-devnet.json");
-  process.exit(1);
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForTx(client: ccc.Client, txHash: string, timeout = 60000): Promise<void> {
-  console.log(`  Waiting for tx ${txHash.slice(0, 18)}... to confirm`);
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
-    try {
-      const tx = await client.getTransaction(txHash);
-      if (tx && tx.status === "committed") {
-        console.log("  Confirmed!");
-        return;
-      }
-    } catch {}
-    await sleep(3000);
-  }
-  throw new Error(`Transaction ${txHash} not confirmed after ${timeout}ms`);
-}
-
-async function getCurrentBlock(client: ccc.Client): Promise<bigint> {
-  const tip = await client.getTip();
-  return BigInt(tip);
-}
-
-async function getCampaignTypeScriptHash(client: ccc.Client, campaignTxHash: string): Promise<string> {
-  const txWithStatus = await client.getTransaction(campaignTxHash);
-  if (!txWithStatus || !txWithStatus.transaction) {
-    throw new Error(`Transaction ${campaignTxHash} not found`);
-  }
-  const campaignOutput = txWithStatus.transaction.outputs[0];
-  if (!campaignOutput.type) {
-    throw new Error("Campaign cell has no type script");
-  }
-  const typeScript = ccc.Script.from(campaignOutput.type);
-  return typeScript.hash();
-}
-
-/** Setup: create a Success campaign with a pledge (returns references for attack tests) */
-async function setupSuccessCampaign() {
-  console.log("\n--- Setting up Success campaign for attack tests ---\n");
-
-  const client = createCkbClient("devnet", rpcUrl);
-  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
-
-  const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
-  const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
-
-  const creatorAddr = await creatorSigner.getRecommendedAddress();
-  const creatorLockHash = (await ccc.Address.fromString(creatorAddr, client)).script.hash();
-
-  const backerAddr = await backerSigner.getRecommendedAddress();
-  const backerLockScript = (await ccc.Address.fromString(backerAddr, client)).script;
-  const backerLockHash = backerLockScript.hash();
-
-  // Create campaign
-  const currentBlock = await getCurrentBlock(client);
-  const deadline = currentBlock + BigInt(5);
-  const fundingGoal = BigInt(100 * 100000000);
-
-  console.log(`Creating campaign (goal: 100 CKB, deadline: block ${deadline})`);
-  const campaignTxHash = await builder.createCampaign(creatorSigner, {
-    creatorLockHash,
-    fundingGoal,
+  const campaignTx = await d.builder.createCampaign(d.creator, {
+    creatorLockHash: d.creatorLock.hash(),
+    fundingGoal: goal,
     deadlineBlock: deadline,
+    title: "Security test campaign",
   });
-  await waitForTx(client, campaignTxHash);
+  await waitForTx(d.client, campaignTx);
+  const typeArgs = await campaignTypeArgs(d.client, campaignTx);
 
-  const campaignTypeScriptHash = await getCampaignTypeScriptHash(client, campaignTxHash);
-
-  // Pledge
-  console.log("Backer pledges 150 CKB");
-  const pledgeTxHash = await builder.createPledgeWithReceipt(backerSigner, {
-    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-    campaignTypeScriptHash,
+  const pledgeTx = await d.builder.createPledgeWithReceipt(d.backer, {
+    campaignOutPoint: { txHash: campaignTx, index: 0 },
+    campaignTypeArgs: typeArgs,
     deadlineBlock: deadline,
-    backerLockHash,
-    amount: BigInt(150 * 100000000),
-    campaignId: campaignTxHash,
+    backerLockHash: d.backerLock.hash(),
+    amount,
+    campaignId: campaignTx,
   });
-  await waitForTx(client, pledgeTxHash);
+  await waitForTx(d.client, pledgeTx);
 
-  // Wait for deadline
-  console.log("Waiting for deadline...");
-  let block = await getCurrentBlock(client);
-  while (block <= deadline) {
-    await sleep(3000);
-    block = await getCurrentBlock(client);
+  if (finalize) {
+    await waitForBlock(d.client, deadline);
+    const finalizeTx = await d.builder.finalizeCampaign(d.creator, {
+      campaignTypeArgs: typeArgs,
+      campaignOutPoint: { txHash: campaignTx, index: 0 },
+      campaignData: { creatorLockHash: d.creatorLock.hash(), fundingGoal: goal, deadlineBlock: deadline, totalPledged: amount },
+      newStatus: CampaignStatus.Success,
+    });
+    await waitForTx(d.client, finalizeTx);
   }
-
-  // Finalize as Success
-  console.log("Finalizing as Success");
-  const finalizeTxHash = await builder.finalizeCampaign(creatorSigner, {
-    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-    campaignData: {
-      creatorLockHash,
-      fundingGoal,
-      deadlineBlock: deadline,
-      totalPledged: BigInt(0),
-    },
-    newStatus: CampaignStatus.Success,
-  });
-  await waitForTx(client, finalizeTxHash);
-
-  const pledgeTxInfo = await client.getTransaction(pledgeTxHash);
-  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[0].capacity);
-
-  const campaignTxInfo = await client.getTransaction(finalizeTxHash);
-  const campaignCapacity = BigInt(campaignTxInfo!.transaction!.outputs[0].capacity);
 
   return {
-    client,
-    builder,
-    campaignTxHash,
-    finalizeTxHash,
-    pledgeTxHash,
-    pledgeCapacity,
-    campaignCapacity,
     deadline,
-    backerLockScript,
-    creatorLockHash,
-    fundingGoal,
+    pledgeTx,
+    pledgeCapacity: (await outputOf(d.client, pledgeTx, 1)).output.capacity,
+    campaignCell: await d.builder.findLiveCampaignCell(typeArgs),
   };
 }
-
-let passed = 0;
-let failed = 0;
 
 // ---------------------------------------------------------------------------
 // Attack 1: Fail-safe backdoor — refund without campaign cell_dep
 // ---------------------------------------------------------------------------
 
-async function attackFailSafeBackdoor() {
-  console.log("\n=== ATTACK 1: Fail-safe Backdoor (refund without campaign cell_dep) ===\n");
+async function attackFailSafeBackdoor(d: Devnet) {
+  console.log("\n=== ATTACK 1: Fail-safe backdoor (refund without campaign cell_dep) ===");
+  const setup = await setupFundedCampaign(d, 12n, true);
 
-  const setup = await setupSuccessCampaign();
-
-  // Attempt refund WITHOUT campaign cell_dep — this was the backdoor
-  console.log("Attempting refund WITHOUT campaign cell_dep on Success campaign...");
-  try {
-    await setup.builder.permissionlessRefund(
-      new ccc.SignerCkbPrivateKey(setup.client, backerKey),
-      {
-        pledgeOutPoint: { txHash: setup.pledgeTxHash, index: 0 },
+  await checks.expectScriptRejection(
+    "refund of a Success campaign's pledge without the campaign cell_dep is rejected",
+    "Inputs[0].Lock",
+    21,
+    () =>
+      d.builder.permissionlessRefund(d.backer, {
+        pledgeOutPoint: { txHash: setup.pledgeTx, index: 1 },
         pledgeCapacity: setup.pledgeCapacity,
-        // campaignCellDep intentionally omitted!
-        backerLockScript: {
-          codeHash: setup.backerLockScript.codeHash,
-          hashType: setup.backerLockScript.hashType,
-          args: setup.backerLockScript.args,
-        },
+        // campaignCellDep intentionally omitted: this was the backdoor
+        backerLockScript: lockLike(d.backerLock),
         deadlineBlock: setup.deadline,
-      }
-    );
-    console.log("  FAIL: Transaction was accepted — backdoor still open!");
-    failed++;
-  } catch (error: any) {
-    const msg = error?.message || String(error);
-    if (msg.includes("Script") || msg.includes("error") || msg.includes("reject") || msg.includes("failed")) {
-      console.log(`  PASS: Transaction correctly rejected!`);
-      console.log(`  Error: ${msg.slice(0, 200)}`);
-      passed++;
-    } else {
-      console.log(`  FAIL: Unexpected error: ${msg.slice(0, 200)}`);
-      failed++;
-    }
-  }
+      })
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Attack 2: Campaign destruction — destroy Success campaign
+// Attack 2: Campaign destruction — destroy a Success campaign within the grace period
 // ---------------------------------------------------------------------------
 
-async function attackCampaignDestruction() {
-  console.log("\n=== ATTACK 2: Destroy Success Campaign (within grace period) ===\n");
+async function attackCampaignDestruction(d: Devnet) {
+  console.log("\n=== ATTACK 2: Destroy a Success campaign within the grace period ===");
+  const setup = await setupFundedCampaign(d, 12n, true);
+  const cell = setup.campaignCell;
 
-  const setup = await setupSuccessCampaign();
-
-  // Attempt to destroy the Success campaign cell
-  console.log("Attempting to destroy Success campaign cell...");
-  try {
-    await setup.builder.destroyCampaign(
-      new ccc.SignerCkbPrivateKey(setup.client, creatorKey),
-      {
-        campaignOutPoint: { txHash: setup.finalizeTxHash, index: 0 },
-        campaignCapacity: setup.campaignCapacity,
-      }
-    );
-    console.log("  FAIL: Transaction was accepted — Success campaign destroyed!");
-    failed++;
-  } catch (error: any) {
-    const msg = error?.message || String(error);
-    if (msg.includes("Script") || msg.includes("error") || msg.includes("reject") || msg.includes("failed")) {
-      console.log(`  PASS: Transaction correctly rejected!`);
-      console.log(`  Error: ${msg.slice(0, 200)}`);
-      passed++;
-    } else {
-      console.log(`  FAIL: Unexpected error: ${msg.slice(0, 200)}`);
-      failed++;
+  // Everything the builder's destroyCampaign leaves out: the campaign-lock dep and a since
+  // at the deadline, so the lock passes and only the grace period can stop it. The capacity
+  // goes to the creator, so the payout check passes too.
+  await checks.expectScriptRejection(
+    "destroying a Success campaign before the grace period is rejected",
+    "Inputs[0].Type",
+    13,
+    async () => {
+      const tx = ccc.Transaction.from({
+        inputs: [{ previousOutput: cell.outPoint, since: setup.deadline }],
+        outputs: [{ capacity: cell.cellOutput.capacity - 100000n, lock: d.creatorLock }],
+        outputsData: ["0x"],
+        cellDeps: [d.contracts.campaignLock, d.contracts.campaign].map((c) => ({
+          outPoint: { txHash: c.txHash, index: c.index },
+          depType: "code" as const,
+        })),
+      });
+      tx.witnesses.push("0x");
+      return d.creator.sendTransaction(tx);
     }
-  }
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Attack 3: Premature finalization — finalize before deadline
+// Attack 3: Premature finalization — finalize before the deadline
 // ---------------------------------------------------------------------------
 
-async function attackPrematureFinalization() {
-  console.log("\n=== ATTACK 3: Premature Finalization (before deadline) ===\n");
+async function attackPrematureFinalization(d: Devnet) {
+  console.log("\n=== ATTACK 3: Premature finalization (before deadline) ===");
+  // Funded, so Success would be justified: only the deadline can stop it
+  const setup = await setupFundedCampaign(d, 10000n, false);
+  const cell = setup.campaignCell;
 
-  const client = createCkbClient("devnet", rpcUrl);
-  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
-
-  const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
-  const creatorAddr = await creatorSigner.getRecommendedAddress();
-  const creatorLockHash = (await ccc.Address.fromString(creatorAddr, client)).script.hash();
-
-  // Create campaign with VERY far future deadline
-  const currentBlock = await getCurrentBlock(client);
-  const deadline = currentBlock + BigInt(10000); // far in the future
-  const fundingGoal = BigInt(100 * 100000000);
-
-  console.log(`Creating campaign with far-future deadline (block ${deadline})`);
-  const campaignTxHash = await builder.createCampaign(creatorSigner, {
-    creatorLockHash,
-    fundingGoal,
-    deadlineBlock: deadline,
-  });
-  await waitForTx(client, campaignTxHash);
-
-  // Attempt to finalize BEFORE deadline
-  console.log("Attempting premature finalization (current block << deadline)...");
-  try {
-    await builder.finalizeCampaign(creatorSigner, {
-      campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-      campaignData: {
-        creatorLockHash,
-        fundingGoal,
-        deadlineBlock: deadline,
-        totalPledged: BigInt(0),
-      },
-      newStatus: CampaignStatus.Success,
-    });
-    console.log("  FAIL: Premature finalization was accepted!");
-    failed++;
-  } catch (error: any) {
-    const msg = error?.message || String(error);
-    if (msg.includes("Script") || msg.includes("error") || msg.includes("reject") || msg.includes("failed") || msg.includes("since")) {
-      console.log(`  PASS: Premature finalization correctly rejected!`);
-      console.log(`  Error: ${msg.slice(0, 200)}`);
-      passed++;
-    } else {
-      console.log(`  FAIL: Unexpected error: ${msg.slice(0, 200)}`);
-      failed++;
+  await checks.expectScriptRejection(
+    "finalizing with a since below the deadline is rejected by campaign-lock",
+    "Inputs[0].Lock",
+    13,
+    async () => {
+      // The builder always uses since = deadline, which the node would refuse as immature
+      // before any script runs. A mature since below the deadline reaches the lock script.
+      const since = BigInt(await d.client.getTip()) - 1n;
+      const tx = ccc.Transaction.from({
+        inputs: [{ previousOutput: cell.outPoint, since }],
+        outputs: [{ capacity: cell.cellOutput.capacity, lock: cell.cellOutput.lock, type: cell.cellOutput.type }],
+        outputsData: [withCampaignStatus(ccc.hexFrom(cell.outputData), CampaignStatus.Success)],
+        cellDeps: [d.contracts.campaignLock, d.contracts.campaign].map((c) => ({
+          outPoint: { txHash: c.txHash, index: c.index },
+          depType: "code" as const,
+        })),
+      });
+      tx.witnesses.push("0x");
+      await tx.completeFeeBy(d.creator, 2000);
+      return d.creator.sendTransaction(tx);
     }
-  }
+  );
 }
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 async function main() {
-  console.log("=== CKB Kickstarter v1.1 Security Attack Tests ===");
-  console.log(`RPC: ${rpcUrl}`);
-  console.log("Testing that hardened contracts reject attack vectors...\n");
-
-  try {
-    await attackFailSafeBackdoor();
-    await attackCampaignDestruction();
-    await attackPrematureFinalization();
-
-    console.log(`\n\n=== SECURITY TEST RESULTS ===`);
-    console.log(`Passed: ${passed}/3`);
-    console.log(`Failed: ${failed}/3`);
-
-    if (failed > 0) {
-      console.log("\nWARNING: Some attack vectors were NOT properly blocked!");
-      process.exit(1);
-    } else {
-      console.log("\nAll attack vectors correctly rejected. Security fixes validated.");
-    }
-  } catch (error) {
-    console.error("\n\nTEST ERROR:", error);
-    process.exit(1);
-  }
+  console.log("=== CKB Kickstarter v1.1 security attack tests ===");
+  const d = await setupDevnet();
+  await attackFailSafeBackdoor(d);
+  await attackCampaignDestruction(d);
+  await attackPrematureFinalization(d);
+  checks.finish("Security");
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error("\nFATAL:", err);
+  process.exit(1);
+});

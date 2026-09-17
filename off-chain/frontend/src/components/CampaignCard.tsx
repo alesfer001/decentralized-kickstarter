@@ -16,6 +16,11 @@ interface CampaignCardProps {
   currentBlock: bigint | null;
 }
 
+/** The campaign's stable URL id: its creation out point, which never moves. */
+function canonicalCampaignId(campaign: Campaign): string {
+  return campaign.originalTxHash ? `${campaign.originalTxHash}_0` : campaign.campaignId;
+}
+
 export function CampaignCard({ campaign, currentBlock }: CampaignCardProps) {
   const progress = getFundingProgress(campaign.totalPledged, campaign.fundingGoal);
 
@@ -35,7 +40,10 @@ export function CampaignCard({ campaign, currentBlock }: CampaignCardProps) {
     : null;
 
   return (
-    <Link href={`/campaigns/${encodeURIComponent(campaign.campaignId)}`}>
+    // Link by the creation out point, not the current one: since v1.2 the campaign cell
+    // moves with every pledge, so a card rendered a moment ago would otherwise link to a
+    // dead id. The indexer resolves a creation-tx id to whatever the live cell is.
+    <Link href={`/campaigns/${encodeURIComponent(canonicalCampaignId(campaign))}`}>
       <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 sm:p-6 hover:border-zinc-400 dark:hover:border-zinc-600 transition-colors">
         <div className="flex items-start justify-between mb-2">
           <div className="flex-1 min-w-0">

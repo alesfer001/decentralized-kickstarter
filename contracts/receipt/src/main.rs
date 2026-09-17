@@ -14,8 +14,10 @@ use ckb_std::{
     debug,
     error::SysError,
     high_level::{
-        load_cell_capacity, load_cell_data, load_cell_lock_hash, load_cell_type, load_script,
+        load_cell_capacity, load_cell_data, load_cell_lock, load_cell_lock_hash, load_cell_type,
+        load_cell_type_hash, load_input_since, load_script,
     },
+    since::{LockValue, Since},
 };
 
 // === Error Codes ===
@@ -33,6 +35,18 @@ const ERROR_LOAD_SCRIPT: i8 = 19;
 const ERROR_INVALID_ARGS: i8 = 20;
 const ERROR_AMOUNT_MISMATCH: i8 = 21;
 const ERROR_BACKER_MISMATCH: i8 = 22;
+// v1.2 Phase 8 (M-02)
+const ERROR_NO_PLEDGE_CONSUMED: i8 = 23;
+const ERROR_CAMPAIGN_MISMATCH: i8 = 24;
+const ERROR_LOAD_SINCE: i8 = 25;
+
+/// Same grace period as pledge-lock and the campaign contract (~180 days at 8s/block).
+/// Past it a campaign cell may already be destroyed, so a receipt no longer needs one.
+const GRACE_PERIOD_BLOCKS: u64 = 1_944_000;
+
+/// Campaign status byte offset in campaign cell data, and the Active value
+const CAMPAIGN_STATUS_OFFSET: usize = 56;
+const CAMPAIGN_STATUS_ACTIVE: u8 = 0;
 
 /// Maximum fee deducted during refund (1 CKB = 100M shannons)
 const MAX_FEE: u64 = 100_000_000;
@@ -40,36 +54,53 @@ const MAX_FEE: u64 = 100_000_000;
 /// Size of pledge lock args (used to identify pledge cells in outputs)
 const PLEDGE_LOCK_ARGS_SIZE: usize = 72;
 
-/// Receipt data layout (40 bytes):
-/// - pledge_amount: u64     (bytes 0-7, LE)
-/// - backer_lock_hash: [u8; 32]  (bytes 8-39)
+/// Receipt data layout (80 bytes):
+/// - pledge_amount: u64                   (bytes 0-7, LE)
+/// - backer_lock_hash: [u8; 32]           (bytes 8-39)
+/// - campaign_type_script_hash: [u8; 32]  (bytes 40-71) — same as the pledge lock args
+/// - deadline_block: u64                  (bytes 72-79, LE) — same as the pledge lock args
+///
+/// The campaign fields let a receipt be destroyed once its campaign is settled. Without them
+/// the only destruction path needs the pledge cell in the same transaction, and a pledge
+/// released or refunded permissionlessly is gone before the backer can pair it.
+/// Receipts from before v1.2 carry only the first 40 bytes.
 struct ReceiptData {
     pledge_amount: u64,
     backer_lock_hash: [u8; 32],
+    campaign: Option<ReceiptCampaign>,
+}
+
+struct ReceiptCampaign {
+    type_script_hash: [u8; 32],
+    deadline_block: u64,
 }
 
 impl ReceiptData {
-    const SIZE: usize = 40;
+    const LEGACY_SIZE: usize = 40;
+    const SIZE: usize = 80;
 
     fn from_bytes(data: &[u8]) -> Result<Self, i8> {
-        if data.len() < Self::SIZE {
+        if data.len() < Self::LEGACY_SIZE {
             return Err(ERROR_INVALID_RECEIPT_DATA);
         }
         let pledge_amount = u64::from_le_bytes(data[0..8].try_into().unwrap());
         let mut backer_lock_hash = [0u8; 32];
         backer_lock_hash.copy_from_slice(&data[8..40]);
+        let campaign = if data.len() >= Self::SIZE {
+            let mut type_script_hash = [0u8; 32];
+            type_script_hash.copy_from_slice(&data[40..72]);
+            Some(ReceiptCampaign {
+                type_script_hash,
+                deadline_block: u64::from_le_bytes(data[72..80].try_into().unwrap()),
+            })
+        } else {
+            None
+        };
         Ok(ReceiptData {
             pledge_amount,
             backer_lock_hash,
+            campaign,
         })
-    }
-
-    #[allow(dead_code)]
-    fn to_bytes(&self) -> [u8; Self::SIZE] {
-        let mut bytes = [0u8; Self::SIZE];
-        bytes[0..8].copy_from_slice(&self.pledge_amount.to_le_bytes());
-        bytes[8..40].copy_from_slice(&self.backer_lock_hash);
-        bytes
     }
 }
 
@@ -80,17 +111,10 @@ impl ReceiptData {
 /// between pledge and receipt args.
 fn validate_receipt_creation() -> i8 {
     // Load receipt type script to get pledge code hash from args
-    let script = match load_script() {
-        Ok(s) => s,
-        Err(_) => return ERROR_LOAD_SCRIPT,
+    let pledge_code_hash = match pledge_code_hash_from_args() {
+        Ok(h) => h,
+        Err(code) => return code,
     };
-    let args = script.args().raw_data();
-    if args.len() < 32 {
-        debug!("Receipt args too short — need pledge code hash");
-        return ERROR_INVALID_ARGS;
-    }
-    let mut pledge_code_hash = [0u8; 32];
-    pledge_code_hash.copy_from_slice(&args[0..32]);
 
     let receipt_data = match load_cell_data(0, Source::GroupOutput) {
         Ok(d) => d,
@@ -99,6 +123,15 @@ fn validate_receipt_creation() -> i8 {
     let receipt = match ReceiptData::from_bytes(&receipt_data) {
         Ok(r) => r,
         Err(code) => return code,
+    };
+
+    // New receipts must carry the campaign fields, or they could never be reclaimed
+    let campaign = match receipt.campaign.as_ref() {
+        Some(c) => c,
+        None => {
+            debug!("Receipt creation: data must be {} bytes", ReceiptData::SIZE);
+            return ERROR_INVALID_RECEIPT_DATA;
+        }
     };
 
     // Validate pledge_amount > 0
@@ -148,6 +181,20 @@ fn validate_receipt_creation() -> i8 {
                         return ERROR_BACKER_MISMATCH;
                     }
 
+                    // Cross-check: receipt campaign and deadline must match the pledge lock
+                    // args, so a receipt cannot point at some other, already settled campaign
+                    let lock_args = match load_cell_lock(i, Source::Output) {
+                        Ok(lock) => lock.args().raw_data(),
+                        Err(_) => return ERROR_LOAD_LOCK,
+                    };
+                    if lock_args.len() < PLEDGE_LOCK_ARGS_SIZE
+                        || lock_args[0..32] != campaign.type_script_hash
+                        || lock_args[32..40] != campaign.deadline_block.to_le_bytes()
+                    {
+                        debug!("Receipt campaign fields do not match the pledge lock args");
+                        return ERROR_CAMPAIGN_MISMATCH;
+                    }
+
                     found_matching_pledge = true;
                     break;
                 }
@@ -166,10 +213,80 @@ fn validate_receipt_creation() -> i8 {
     0
 }
 
-/// D-12: During refund, verify refund amount matches receipt's stored pledge_amount,
-/// and output goes to backer_lock_hash from receipt data.
+/// Read the pledge contract code hash out of this receipt's type script args.
+fn pledge_code_hash_from_args() -> Result<[u8; 32], i8> {
+    let script = load_script().map_err(|_| ERROR_LOAD_SCRIPT)?;
+    let args = script.args().raw_data();
+    if args.len() < 32 {
+        debug!("Receipt args too short — need pledge code hash");
+        return Err(ERROR_INVALID_ARGS);
+    }
+    let mut pledge_code_hash = [0u8; 32];
+    pledge_code_hash.copy_from_slice(&args[0..32]);
+    Ok(pledge_code_hash)
+}
+
+/// M-02: a receipt only exists as the counterpart of a pledge cell, so destroying one
+/// must consume a pledge cell in the same transaction. Without this an attacker willing
+/// to burn capital could destroy a receipt while leaving the pledge intact, paying the
+/// refund output from another input and leaving the pledge's accounting inconsistent.
+fn pledge_consumed_in_inputs(pledge_code_hash: &[u8; 32]) -> Result<bool, i8> {
+    for i in 0.. {
+        match load_cell_type(i, Source::Input) {
+            Ok(Some(type_script)) => {
+                if type_script.code_hash().raw_data().as_ref() == &pledge_code_hash[..] {
+                    return Ok(true);
+                }
+            }
+            Ok(None) => continue,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_DATA),
+        }
+    }
+    Ok(false)
+}
+
+/// Is the receipt's campaign settled? Either its finalized campaign cell is in cell deps,
+/// or the grace period past the deadline has run out (the campaign cell may be gone by then).
+fn campaign_settled(campaign: &ReceiptCampaign) -> Result<bool, i8> {
+    for i in 0.. {
+        match load_cell_type_hash(i, Source::CellDep) {
+            Ok(Some(hash)) if hash == campaign.type_script_hash => {
+                let data = load_cell_data(i, Source::CellDep).map_err(|_| ERROR_LOAD_DATA)?;
+                if data.len() > CAMPAIGN_STATUS_OFFSET && data[CAMPAIGN_STATUS_OFFSET] != CAMPAIGN_STATUS_ACTIVE {
+                    return Ok(true);
+                }
+            }
+            Ok(_) => continue,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_DATA),
+        }
+    }
+
+    let since_raw = load_input_since(0, Source::GroupInput).map_err(|_| ERROR_LOAD_SINCE)?;
+    if since_raw == 0 {
+        return Ok(false);
+    }
+    let since = Since::new(since_raw);
+    if !since.is_absolute() || !since.flags_is_valid() {
+        return Ok(false);
+    }
+    match since.extract_lock_value() {
+        Some(LockValue::BlockNumber(block)) => {
+            Ok(block >= campaign.deadline_block.saturating_add(GRACE_PERIOD_BLOCKS))
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Receipt destruction. Two ways to destroy a receipt:
+///
+/// 1. With its campaign settled (finalized campaign cell in cell deps, or past the grace
+///    period). The pledge lock routes the funds on its own by then, so the receipt is only
+///    the backer's record, and the backer (whose lock guards it) can reclaim its capacity.
+/// 2. M-02: alongside a consumed pledge cell, with the refund going to the backer. This is
+///    the only path for pre-v1.2 receipts and for a partial refund of a merged pledge.
 fn validate_receipt_destruction() -> i8 {
-    // Load the receipt being destroyed
     let receipt_data = match load_cell_data(0, Source::GroupInput) {
         Ok(d) => d,
         Err(_) => return ERROR_LOAD_DATA,
@@ -178,6 +295,28 @@ fn validate_receipt_destruction() -> i8 {
         Ok(r) => r,
         Err(code) => return code,
     };
+
+    if let Some(campaign) = receipt.campaign.as_ref() {
+        match campaign_settled(campaign) {
+            Ok(true) => return 0,
+            Ok(false) => {}
+            Err(code) => return code,
+        }
+    }
+
+    // M-02: the paired pledge cell must be consumed in the same transaction
+    let pledge_code_hash = match pledge_code_hash_from_args() {
+        Ok(h) => h,
+        Err(code) => return code,
+    };
+    match pledge_consumed_in_inputs(&pledge_code_hash) {
+        Ok(true) => {}
+        Ok(false) => {
+            debug!("Receipt destruction: campaign not settled and no pledge cell consumed");
+            return ERROR_NO_PLEDGE_CONSUMED;
+        }
+        Err(code) => return code,
+    }
 
     // Verify that an output exists going to backer_lock_hash
     // with capacity >= pledge_amount - MAX_FEE

@@ -49,6 +49,10 @@ export interface ContractInfo {
  * Parameters for finalizing a campaign (Active -> Success/Failed)
  */
 export interface FinalizeCampaignParams {
+  // Campaign type args (TypeID + pledge-lock code hash) — the campaign's stable identity.
+  // Supplying it lets the builder resolve the live cell directly; without it the args are
+  // read from campaignOutPoint's transaction, which works even when that out point is stale.
+  campaignTypeArgs?: string;
   campaignOutPoint: { txHash: string; index: number };
   campaignData: {
     creatorLockHash: string;
@@ -58,7 +62,9 @@ export interface FinalizeCampaignParams {
     title?: string;
     description?: string;
   };
-  newStatus: CampaignStatus.Success | CampaignStatus.Failed;
+  // Optional since v1.2 — the on-chain accumulator decides the terminal status. When set,
+  // it is checked against what the chain says and a contradiction is an error.
+  newStatus?: CampaignStatus.Success | CampaignStatus.Failed;
 }
 
 /**
@@ -92,7 +98,11 @@ export interface DestroyCampaignParams {
  */
 export interface CreatePledgeWithReceiptParams {
   campaignOutPoint: { txHash: string; index: number };
-  campaignTypeScriptHash: string;  // hash of campaign's type script (for pledge lock args)
+  // Campaign type args (TypeID + pledge-lock code hash). Since v1.2 the campaign cell's
+  // out point moves with every pledge, so this is the stable handle used to re-resolve the
+  // live cell on retry. Derived from campaignOutPoint when omitted.
+  campaignTypeArgs?: string;
+  campaignTypeScriptHash?: string; // cross-check only; derived from the live campaign cell
   deadlineBlock: bigint;           // from campaign data
   backerLockHash: string;          // backer's lock script hash
   amount: bigint;                  // pledge amount in shannons
@@ -105,9 +115,22 @@ export interface CreatePledgeWithReceiptParams {
 export interface PermissionlessReleaseParams {
   pledgeOutPoint: { txHash: string; index: number };
   pledgeCapacity: bigint;
+  // Exactly what the creator receives. Read from the pledge cell's data when omitted.
+  pledgeAmount?: bigint;
   campaignCellDep: { txHash: string; index: number };
   creatorLockScript: { codeHash: string; hashType: string; args: string };
+  // Receives the cell's storage overhead back. When omitted, found among the outputs of the
+  // transaction that created the pledge cell (the receipt or the backer's change).
+  backerLockScript?: { codeHash: string; hashType: string; args: string };
   deadlineBlock: bigint;  // for since field
+}
+
+/**
+ * Parameters for reclaiming a receipt cell's capacity once its campaign is finalized
+ */
+export interface ReclaimReceiptParams {
+  receiptOutPoint: { txHash: string; index: number };
+  campaignCellDep: { txHash: string; index: number };  // the finalized campaign cell
 }
 
 /**
