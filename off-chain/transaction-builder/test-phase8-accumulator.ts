@@ -157,7 +157,7 @@ async function main() {
 
   // --- 2. Pledges accumulate ------------------------------------------------
   console.log("\n=== 2. Two pledges accumulate on-chain ===");
-  const firstAmount = BigInt(80) * CKB;
+  const firstAmount = BigInt(100) * CKB;
   const pledge1 = await builder.createPledgeWithReceipt(backerSigner, {
     campaignOutPoint: { txHash: campaignTxHash, index: 0 },
     campaignTypeArgs,
@@ -202,7 +202,7 @@ async function main() {
   await expectRejection("inflated total_pledged rejected by campaign type script", async () => {
     const cell = await builder.findLiveCampaignCell(campaignTypeArgs);
     const data = ccc.hexFrom(cell.outputData);
-    const amount = BigInt(10) * CKB;
+    const amount = BigInt(100) * CKB;
     // Claim ten times the pledge that is actually created
     const lyingData = withTotalPledged(data, readTotalPledged(data) + amount * 10n);
     return submitPledgeTx(client, backerSigner, cell, lyingData, amount, backerLockHash, backerLockScript, deadline, campaignTxHash, campaignTypeScript.hash());

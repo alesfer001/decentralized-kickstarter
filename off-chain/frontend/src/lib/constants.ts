@@ -137,6 +137,12 @@ export const PLEDGE_DATA_SIZE = 72;
 export const RECEIPT_DATA_SIZE = 80;
 
 /**
+ * Smallest pledge the campaign contract accepts, in CKB. A released pledge pays the creator
+ * its exact amount in a cell of its own, and a cell needs 61+ CKB to exist.
+ */
+export const MIN_PLEDGE_CKB = 100;
+
+/**
  * Storage overhead of a pledge cell, in shannons, on top of the pledged amount.
  * Same formula as the transaction builder's calculateCellCapacity(72, true, 65), which covers
  * the 250 CKB the cell actually occupies. The pledge lock returns it to the backer on

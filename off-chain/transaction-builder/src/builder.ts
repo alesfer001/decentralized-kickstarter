@@ -6,6 +6,9 @@ import { createCkbClient, NetworkType } from "./ckbClient";
 /** Byte length of the v1.2 campaign type script args: TypeID (32) + pledge-lock code hash (32) */
 const CAMPAIGN_TYPE_ARGS_SIZE = 64;
 
+/** Smallest pledge the campaign contract accepts (100 CKB), mirrored so callers get a clear error */
+const MIN_PLEDGE_AMOUNT = BigInt(100) * BigInt(100000000);
+
 /** How many times a pledge is retried when another pledge wins the race for the campaign cell */
 const PLEDGE_CONTENTION_RETRIES = 4;
 
@@ -524,6 +527,10 @@ export class TransactionBuilder {
    * Produces: [0] pledge cell with custom pledge lock, [1] receipt cell owned by backer
    */
   async createPledgeWithReceipt(signer: ccc.Signer, params: CreatePledgeWithReceiptParams): Promise<string> {
+    if (params.amount < MIN_PLEDGE_AMOUNT) {
+      throw new Error(`Pledge of ${params.amount} shannons is below the ${MIN_PLEDGE_AMOUNT} shannon (100 CKB) minimum`);
+    }
+
     // v1.2: a pledge now also consumes and re-creates the campaign cell with a larger
     // total_pledged. That makes pledges contend for one cell, so a pledge that loses the
     // race is retried against the winner's fresh campaign cell rather than failing.

@@ -19,7 +19,7 @@ use ckb_std::{
     debug,
     high_level::{
         load_script, load_script_hash, load_cell_data, load_cell_capacity, load_cell_lock,
-        load_cell_occupied_capacity, load_input_since,
+        load_cell_occupied_capacity, load_cell_lock_hash, load_input_since,
     },
     ckb_constants::Source,
     error::SysError,
@@ -45,6 +45,18 @@ const ERROR_OVERFLOW: i8 = 19;
 const ERROR_LOAD_CELL: i8 = 20;
 const ERROR_MULTIPLE_CAMPAIGN_CELLS: i8 = 21;
 const ERROR_PLEDGE_UNDERFUNDED: i8 = 22;
+const ERROR_PLEDGE_BELOW_MINIMUM: i8 = 23;
+const ERROR_CREATOR_NOT_PAID: i8 = 24;
+const ERROR_DESTRUCTION_WITH_PLEDGES: i8 = 25;
+
+/// Smallest pledge a campaign accepts: 100 CKB.
+/// A released pledge pays the creator exactly its amount in its own cell, and a cell needs
+/// 61+ CKB to exist (more for locks with longer args, such as JoyID). Below this a pledge
+/// could count toward the goal yet never be releasable to the creator.
+const MIN_PLEDGE_AMOUNT: u64 = 100 * 100_000_000;
+
+/// Fee a campaign cell may lose when it is destroyed and returned to the creator (1 CKB)
+const MAX_FEE: u64 = 100_000_000;
 
 /// Grace period: ~180 days at 8s/block = 1,944,000 blocks
 /// A finalized campaign cell can only be destroyed after this period past deadline,
@@ -193,6 +205,7 @@ fn sum_campaign_pledges(
     source: Source,
     pledge_lock_code_hash: &[u8; 32],
     campaign_type_hash: &[u8; 32],
+    enforce_minimum: bool,
 ) -> Result<u64, i8> {
     let mut total: u64 = 0;
 
@@ -229,6 +242,11 @@ fn sum_campaign_pledges(
         // holds it on top of its own storage cost, otherwise a cell holding a few hundred
         // CKB could claim the whole funding goal and push the campaign to Success. The
         // storage cost on top is what the pledge lock later returns to the backer.
+        if enforce_minimum && amount < MIN_PLEDGE_AMOUNT {
+            debug!("Pledge cell {} amount {} is below the minimum {}", i, amount, MIN_PLEDGE_AMOUNT);
+            return Err(ERROR_PLEDGE_BELOW_MINIMUM);
+        }
+
         let capacity = load_cell_capacity(i, source).map_err(|_| ERROR_LOAD_CELL)?;
         let occupied = load_cell_occupied_capacity(i, source).map_err(|_| ERROR_LOAD_CELL)?;
         let required = amount.checked_add(occupied).ok_or(ERROR_OVERFLOW)?;
@@ -326,8 +344,9 @@ fn validate_pledge_update(
     // Net pledge inflow: pledge cells created minus pledge cells consumed. A merge
     // transaction nets to zero and is rejected below — merges leave the total untouched
     // and have no reason to consume the campaign cell.
-    let created = sum_campaign_pledges(Source::Output, pledge_lock_code_hash, &campaign_type_hash)?;
-    let consumed = sum_campaign_pledges(Source::Input, pledge_lock_code_hash, &campaign_type_hash)?;
+    // The minimum applies to new pledges only; consumed ones were checked when created
+    let created = sum_campaign_pledges(Source::Output, pledge_lock_code_hash, &campaign_type_hash, true)?;
+    let consumed = sum_campaign_pledges(Source::Input, pledge_lock_code_hash, &campaign_type_hash, false)?;
 
     if created <= consumed {
         debug!("Pledge update: no net pledge inflow ({} in, {} out)", created, consumed);
@@ -481,6 +500,51 @@ fn validate_destruction_after_grace(campaign: &CampaignData) -> Result<(), i8> {
     }
 }
 
+/// A destroyed campaign cell's capacity belongs to the creator.
+///
+/// Destruction after the grace period needs no signature, so without this anyone could
+/// destroy a finalized campaign and keep its capacity. No pledge-lock cell may be spent in
+/// the same transaction: a pledge release also pays the creator, and one creator output
+/// would then satisfy both scripts, letting the builder keep the difference.
+fn validate_destruction_pays_creator(
+    campaign: &CampaignData,
+    pledge_lock_code_hash: &[u8; 32],
+) -> Result<(), i8> {
+    for i in 0.. {
+        match load_cell_lock(i, Source::Input) {
+            Ok(lock) => {
+                if lock.code_hash().raw_data().as_ref() == &pledge_lock_code_hash[..] {
+                    debug!("Campaign destruction blocked — pledge cell spent in the same transaction");
+                    return Err(ERROR_DESTRUCTION_WITH_PLEDGES);
+                }
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_CELL),
+        }
+    }
+
+    let capacity = load_cell_capacity(0, Source::GroupInput).map_err(|_| ERROR_LOAD_CELL)?;
+    let mut paid: u64 = 0;
+    for i in 0.. {
+        match load_cell_lock_hash(i, Source::Output) {
+            Ok(hash) => {
+                if hash == campaign.creator_lock_hash {
+                    let cap = load_cell_capacity(i, Source::Output).map_err(|_| ERROR_LOAD_CELL)?;
+                    paid = paid.checked_add(cap).ok_or(ERROR_OVERFLOW)?;
+                }
+            }
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_CELL),
+        }
+    }
+
+    if paid < capacity.saturating_sub(MAX_FEE) {
+        debug!("Campaign destruction pays the creator {} of {}", paid, capacity);
+        return Err(ERROR_CREATOR_NOT_PAID);
+    }
+    Ok(())
+}
+
 pub fn program_entry() -> i8 {
     debug!("Campaign Type Script running");
 
@@ -616,7 +680,11 @@ pub fn program_entry() -> i8 {
                     ERROR_DESTRUCTION_NOT_ALLOWED
                 }
                 CampaignStatus::Success | CampaignStatus::Failed => {
-                    match validate_destruction_after_grace(&campaign) {
+                    // Both must hold. The payout check runs first only so each rejection
+                    // can be observed on a devnet, where the grace period is unreachable.
+                    match validate_destruction_pays_creator(&campaign, &pledge_lock_code_hash)
+                        .and_then(|_| validate_destruction_after_grace(&campaign))
+                    {
                         Ok(()) => 0,
                         Err(code) => code,
                     }

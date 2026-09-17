@@ -22,7 +22,7 @@ import {
   calculateCostBreakdown,
   formatCost,
 } from "@/lib/utils";
-import { CONTRACTS, PLEDGE_CELL_OVERHEAD, RECEIPT_CELL_CAPACITY, EXPLORER_URL } from "@/lib/constants";
+import { CONTRACTS, MIN_PLEDGE_CKB, PLEDGE_CELL_OVERHEAD, RECEIPT_CELL_CAPACITY, EXPLORER_URL } from "@/lib/constants";
 import {
   u64ToHexLE,
   serializeMetadataHex,
@@ -238,6 +238,10 @@ export default function CampaignDetailPage() {
     const amount = parseFloat(pledgeAmount);
     if (isNaN(amount) || amount <= 0) {
       setPledgeError("Please enter a valid pledge amount");
+      return;
+    }
+    if (amount < MIN_PLEDGE_CKB) {
+      setPledgeError(`The minimum pledge is ${MIN_PLEDGE_CKB} CKB`);
       return;
     }
 
@@ -970,12 +974,12 @@ export default function CampaignDetailPage() {
                       const value = e.target.value;
                       setPledgeAmount(value);
                       // Clear error if input is valid (non-empty, positive number)
-                      if (value && !isNaN(parseFloat(value)) && parseFloat(value) > 0) {
+                      if (value && !isNaN(parseFloat(value)) && parseFloat(value) >= MIN_PLEDGE_CKB) {
                         setPledgeError(null);
                       }
                     }}
-                    placeholder="100"
-                    min="1"
+                    placeholder={String(MIN_PLEDGE_CKB)}
+                    min={MIN_PLEDGE_CKB}
                     step="1"
                     className="w-full px-4 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     disabled={pledging}
