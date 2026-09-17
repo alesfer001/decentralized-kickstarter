@@ -143,9 +143,6 @@ export function IndexerWaitNotice({ phase, elapsedSeconds, onRetry }: IndexerWai
               : "Taking a bit longer than usual. Still trying, no need to refresh."}
         </p>
       </div>
-      {waking && (
-        <span className="text-sm tabular-nums text-amber-800 dark:text-amber-200">{elapsedSeconds}s</span>
-      )}
     </div>
   );
 }
