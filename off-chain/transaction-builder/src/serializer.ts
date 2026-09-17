@@ -139,15 +139,40 @@ export function serializePledgeData(params: PledgeParams): string {
 }
 
 /**
- * Serialize receipt cell data
- * Layout (40 bytes):
- * - pledge_amount: u64 LE    (bytes 0-7)
- * - backer_lock_hash: [u8; 32] (bytes 8-39)
+ * Read the pledged amount (u64 LE, bytes 64-71) from pledge cell data
  */
-export function serializeReceiptData(pledgeAmount: bigint, backerLockHash: string): string {
+export function readPledgeAmount(pledgeData: string): bigint {
+  const hex = pledgeData.startsWith("0x") ? pledgeData.slice(2) : pledgeData;
+  if (hex.length < 144) {
+    throw new Error(`Pledge data too short: ${hex.length / 2} bytes`);
+  }
+  const bytes = hex.slice(128, 144).match(/../g)!.reverse().join("");
+  return BigInt("0x" + bytes);
+}
+
+/**
+ * Serialize receipt cell data
+ * Layout (80 bytes):
+ * - pledge_amount: u64 LE                 (bytes 0-7)
+ * - backer_lock_hash: [u8; 32]            (bytes 8-39)
+ * - campaign_type_script_hash: [u8; 32]   (bytes 40-71) — must match the pledge lock args
+ * - deadline_block: u64 LE                (bytes 72-79) — must match the pledge lock args
+ *
+ * The campaign fields let the backer reclaim the receipt's capacity once the campaign is
+ * finalized, after the pledge itself has been released or refunded.
+ */
+export function serializeReceiptData(
+  pledgeAmount: bigint,
+  backerLockHash: string,
+  campaignTypeScriptHash: string,
+  deadlineBlock: bigint
+): string {
   const amount = u64ToHexLE(pledgeAmount);
   const hash = backerLockHash.startsWith("0x") ? backerLockHash.slice(2) : backerLockHash;
-  return "0x" + amount + hash;
+  const campaignHash = campaignTypeScriptHash.startsWith("0x")
+    ? campaignTypeScriptHash.slice(2)
+    : campaignTypeScriptHash;
+  return "0x" + amount + hash + campaignHash + u64ToHexLE(deadlineBlock);
 }
 
 /**

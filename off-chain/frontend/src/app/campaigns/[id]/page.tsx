@@ -22,7 +22,7 @@ import {
   calculateCostBreakdown,
   formatCost,
 } from "@/lib/utils";
-import { CONTRACTS, PLEDGE_DATA_SIZE, RECEIPT_DATA_SIZE, EXPLORER_URL } from "@/lib/constants";
+import { CONTRACTS, PLEDGE_CELL_OVERHEAD, RECEIPT_CELL_CAPACITY, EXPLORER_URL } from "@/lib/constants";
 import {
   u64ToHexLE,
   serializeMetadataHex,
@@ -282,21 +282,19 @@ export default function CampaignDetailPage() {
         // Pledge cell data (72 bytes): campaign_id + backer_lock_hash + amount
         const pledgeData = "0x" + linkageTxHash + backerHash + u64ToHexLE(amountShannons);
 
-        // Receipt cell data (40 bytes): pledge_amount + backer_lock_hash
-        const receiptData = "0x" + u64ToHexLE(amountShannons) + backerHash;
-
         // Pledge lock args (72 bytes): campaign_type_script_hash + deadline_block + backer_lock_hash
         const deadlineBlock = BigInt(campaign.deadlineBlock);
         const pledgeLockArgs = "0x" + campaignTypeHash + u64ToHexLE(deadlineBlock) + backerHash;
 
-        // Capacity calculations
-        // Pledge cell: lock script with pledge-lock args (72 bytes) = code_hash(32) + hash_type(1) + args(72) = 105 bytes
-        const pledgeLockSize = 105;
-        const pledgeBaseCapacity = BigInt(Math.ceil((8 + PLEDGE_DATA_SIZE + 65 + pledgeLockSize) * 1.2)) * BigInt(100000000);
-        const pledgeTotalCapacity = pledgeBaseCapacity + amountShannons;
+        // Receipt cell data (80 bytes): pledge_amount + backer_lock_hash + campaign + deadline.
+        // The campaign fields must match the pledge lock args; they let the backer reclaim
+        // the receipt once the campaign is finalized.
+        const receiptData =
+          "0x" + u64ToHexLE(amountShannons) + backerHash + campaignTypeHash + u64ToHexLE(deadlineBlock);
 
-        // Receipt cell: backer's lock (65 bytes) + receipt type script (65 bytes)
-        const receiptCapacity = BigInt(Math.ceil((8 + RECEIPT_DATA_SIZE + 65 + 65) * 1.2)) * BigInt(100000000);
+        // Capacities, same formulas as the transaction builder
+        const pledgeTotalCapacity = PLEDGE_CELL_OVERHEAD + amountShannons;
+        const receiptCapacity = RECEIPT_CELL_CAPACITY;
 
         const tx = ccc.Transaction.from({
           inputs: [
@@ -560,7 +558,33 @@ export default function CampaignDetailPage() {
         toast("error", "Could not fetch pledge transaction from chain");
         return;
       }
-      const pledgeCapacity = BigInt(pledgeTxData.transaction.outputs[pledgeCell.index]!.capacity);
+      const pledgeOutput = pledgeTxData.transaction.outputs[pledgeCell.index]!;
+      const pledgeCapacity = BigInt(pledgeOutput.capacity);
+      const pledgeAmount = BigInt(pledgeCell.amount);
+
+      // The creator receives exactly the pledged amount; the cell's storage overhead goes back
+      // to the backer. The pledge cell only stores the backer's lock hash, so find the full
+      // lock among the pledge transaction's outputs (the receipt is always one of them).
+      const backerLockHash = ccc.hexFrom(ccc.bytesFrom(pledgeOutput.lock.args).slice(40, 72));
+      const backerLock = pledgeTxData.transaction.outputs
+        .map((o: { lock: ccc.Script }) => ccc.Script.from(o.lock))
+        .find((lock: ccc.Script) => lock.hash() === backerLockHash);
+      if (!backerLock) {
+        toast("error", "Could not find the backer's lock script for this pledge");
+        return;
+      }
+      const creatorLock = ccc.Script.from({
+        codeHash: creatorLockScript.codeHash || "",
+        hashType: (creatorLockScript.hashType || "type") as ccc.HashTypeLike,
+        args: creatorLockScript.args || "",
+      });
+      const releaseFee = BigInt(100000);
+      const releaseOutputs = creatorLock.eq(backerLock)
+        ? [{ capacity: pledgeCapacity - releaseFee, lock: creatorLock }]
+        : [
+            { capacity: pledgeAmount, lock: creatorLock },
+            { capacity: pledgeCapacity - pledgeAmount - releaseFee, lock: backerLock },
+          ];
 
       // Get campaign cell outpoint for deps
       const [campaignTxHash, campaignIndexStr] = campaign.campaignId.split("_");
@@ -580,17 +604,8 @@ export default function CampaignDetailPage() {
             since: campaign.deadlineBlock,
           },
         ],
-        outputs: [
-          {
-            capacity: pledgeCapacity - BigInt(100000), // Deduct small fee
-            lock: {
-              codeHash: creatorLockScript.codeHash || "",
-              hashType: (creatorLockScript.hashType || "type") as "type" | "data" | "data1" | "data2",
-              args: creatorLockScript.args || "",
-            },
-          },
-        ],
-        outputsData: ["0x"],
+        outputs: releaseOutputs,
+        outputsData: releaseOutputs.map(() => "0x"),
         cellDeps: [
           {
             outPoint: campaignCellDep,

@@ -7,7 +7,13 @@
  * the balance changes add up to the shannon.
  *
  *   Success path: create → pledge → finalize → permissionless release (backer triggers)
+ *                 → backer reclaims the receipt
  *   Failure path: create → pledge → finalize → permissionless refund (creator triggers)
+ *                 → backer reclaims the receipt
+ *
+ * The end state it proves: a backer's only real cost is the amount pledged to a campaign
+ * that succeeded, plus network fees. The pledge cell's storage overhead and the receipt
+ * cell are deposits that come back.
  *
  * "Balance" means every live cell under a wallet's lock, including typed cells such as the
  * receipt. "Spendable" means cells with no type script and no data — what a wallet can
@@ -140,6 +146,10 @@ async function main() {
   });
 
   const pledgeAmount = 150n * CKB;
+  const start = await snapshot();
+  let backerFees = 0n; // every fee that came out of the backer's funds
+  let creatorFees = 0n;
+  let campaignCells = 0n;
   const deadline = BigInt(await client.getTip()) + 15n;
 
   // Two campaigns sharing one deadline: goal 100 CKB succeeds, goal 1000 CKB fails
@@ -171,6 +181,8 @@ async function main() {
       `paid ${fmt(before.creator.total - after.creator.total)}`
     );
     check("backer untouched by campaign creation", before.backer.total === after.backer.total);
+    creatorFees += createFee;
+    campaignCells += campaignCapacity;
     const typeArgs = ccc.hexFrom((await client.getTransaction(campaignTx))!.transaction!.outputs[0].type!.args);
 
     // --- Pledge ---------------------------------------------------------------
@@ -190,6 +202,7 @@ async function main() {
     const pledgeFee = await txFee(client, pledgeTx);
     const pledgeCapacity = await outputCapacity(client, pledgeTx, 1);
     const receiptCapacity = await outputCapacity(client, pledgeTx, 2);
+    backerFees += pledgeFee;
     const campaignAfterPledge = await builder.findLiveCampaignCell(typeArgs);
     console.log(
       `   pledge cell ${fmt(pledgeCapacity)} (= pledge ${fmt(pledgeAmount)} + overhead ${fmt(pledgeCapacity - pledgeAmount)})`
@@ -232,6 +245,7 @@ async function main() {
     await waitForTx(client, finalizeTx);
     const after = await snapshot();
     const fee = await txFee(client, finalizeTx);
+    creatorFees += fee;
     finalized[s.name] = await builder.findLiveCampaignCell(st.typeArgs);
 
     check(`campaign finalized as ${CampaignStatus[s.expected]}`, readCampaignStatus(ccc.hexFrom(finalized[s.name].outputData)) === s.expected);
@@ -260,17 +274,20 @@ async function main() {
     const after = await snapshot();
     const fee = await txFee(client, releaseTx);
 
-    console.log(`   creator received ${fmt(after.creator.total - before.creator.total)}, fee ${fmt(fee)} (taken from the pledge)`);
+    backerFees += fee;
+    const overhead = st.pledgeCapacity - pledgeAmount;
+
+    console.log(`   creator received ${fmt(after.creator.total - before.creator.total)}, backer got back ${fmt(after.backer.total - before.backer.total)}, fee ${fmt(fee)}`);
     check(
-      "creator received the whole pledge cell minus the fee",
-      after.creator.total - before.creator.total === st.pledgeCapacity - fee
+      "creator received exactly the pledged amount",
+      after.creator.total - before.creator.total === pledgeAmount
+    );
+    check(
+      "backer got the pledge cell's storage overhead back, less the fee",
+      after.backer.total - before.backer.total === overhead - fee,
+      `overhead ${fmt(overhead)}`
     );
     check("release fee is within the pledge lock's 1 CKB cap", fee > 0n && fee <= CKB, fmt(fee));
-    check("triggering wallet (backer) paid nothing to trigger", before.backer.total === after.backer.total);
-    console.log(
-      `   NOTE: creator got ${fmt(st.pledgeCapacity - fee)} for a ${fmt(pledgeAmount)} pledge — ` +
-        `the ${fmt(st.pledgeCapacity - pledgeAmount)} cell overhead went to the creator too`
-    );
   }
 
   // --- Failure: refund, triggered by the creator ------------------------------
@@ -289,6 +306,7 @@ async function main() {
     const after = await snapshot();
     const fee = await txFee(client, refundTx);
 
+    backerFees += fee;
     console.log(`   backer received ${fmt(after.backer.total - before.backer.total)}, fee ${fmt(fee)} (taken from the pledge)`);
     check(
       "backer got the whole pledge cell back minus the fee",
@@ -297,28 +315,46 @@ async function main() {
     check("triggering wallet (creator) paid nothing to trigger", before.creator.total === after.creator.total);
   }
 
-  // --- Receipts: can the backer get that capacity back? -------------------------
+  // --- Receipts: the backer reclaims both ------------------------------------------
   for (const s of scenarios) {
     const st = state[s.name];
-    console.log(`\n=== [${s.name}] Backer tries to reclaim the ${fmt(st.receiptCapacity)} receipt ===`);
-    try {
-      const tx = ccc.Transaction.from({
-        inputs: [{ previousOutput: { txHash: st.pledgeTx, index: 2 } }],
-        outputs: [{ capacity: st.receiptCapacity, lock: backerLock }],
-        outputsData: ["0x"],
-        cellDeps: [{ outPoint: { txHash: deployment.receipt.txHash, index: deployment.receipt.index }, depType: "code" }],
-      });
-      await tx.addCellDepsOfKnownScripts(client, ccc.KnownScript.Secp256k1Blake160);
-      // Pay the fee out of the receipt itself, so no other backer cell is needed
-      await tx.completeFeeChangeToOutput(backer, 0, 2000);
-      const hash = await backer.sendTransaction(tx);
-      await waitForTx(client, hash);
-      console.log(`   receipt reclaimed: ${hash}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.log(`   receipt NOT reclaimable: ${message.slice(0, 200).replace(/\s+/g, " ")}`);
-    }
+    console.log(`\n=== [${s.name}] Backer reclaims the ${fmt(st.receiptCapacity)} receipt ===`);
+    const before = await snapshot();
+    const reclaimTx = await builder.reclaimReceipt(backer, {
+      receiptOutPoint: { txHash: st.pledgeTx, index: 2 },
+      campaignCellDep: { txHash: finalized[s.name].outPoint.txHash, index: Number(finalized[s.name].outPoint.index) },
+    });
+    await waitForTx(client, reclaimTx);
+    const after = await snapshot();
+    const fee = await txFee(client, reclaimTx);
+    backerFees += fee;
+
+    check(
+      "receipt capacity is spendable again, less the fee",
+      after.backer.spendable - before.backer.spendable === st.receiptCapacity - fee,
+      `+${fmt(after.backer.spendable - before.backer.spendable)}`
+    );
+    check("backer's total balance moved only by the fee", before.backer.total - after.backer.total === fee, fmt(fee));
+    check("creator untouched by the reclaim", before.creator.total === after.creator.total);
   }
+
+  // --- Whole lifecycle ------------------------------------------------------------
+  console.log("\n=== Whole lifecycle, both campaigns ===");
+  const end = await snapshot();
+  console.log(`   backer:  ${fmt(end.backer.total - start.backer.total)} (fees ${fmt(backerFees)})`);
+  console.log(`   creator: ${fmt(end.creator.total - start.creator.total)} (fees ${fmt(creatorFees)}, campaign cells ${fmt(campaignCells)})`);
+  check(
+    "backer's net cost is the successful pledge plus fees, nothing else",
+    start.backer.total - end.backer.total === pledgeAmount + backerFees
+  );
+  check(
+    "no receipt capacity left parked by these campaigns",
+    end.backer.total - end.backer.spendable === start.backer.total - start.backer.spendable
+  );
+  check(
+    "creator's net is the successful pledge, less fees and the campaign cells still on chain",
+    end.creator.total - start.creator.total === pledgeAmount - creatorFees - campaignCells
+  );
 
   console.log(`\n=== ${passed} passed, ${failed} failed ===`);
   process.exit(failed === 0 ? 0 : 1);

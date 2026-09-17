@@ -115,9 +115,22 @@ export interface CreatePledgeWithReceiptParams {
 export interface PermissionlessReleaseParams {
   pledgeOutPoint: { txHash: string; index: number };
   pledgeCapacity: bigint;
+  // Exactly what the creator receives. Read from the pledge cell's data when omitted.
+  pledgeAmount?: bigint;
   campaignCellDep: { txHash: string; index: number };
   creatorLockScript: { codeHash: string; hashType: string; args: string };
+  // Receives the cell's storage overhead back. When omitted, found among the outputs of the
+  // transaction that created the pledge cell (the receipt or the backer's change).
+  backerLockScript?: { codeHash: string; hashType: string; args: string };
   deadlineBlock: bigint;  // for since field
+}
+
+/**
+ * Parameters for reclaiming a receipt cell's capacity once its campaign is finalized
+ */
+export interface ReclaimReceiptParams {
+  receiptOutPoint: { txHash: string; index: number };
+  campaignCellDep: { txHash: string; index: number };  // the finalized campaign cell
 }
 
 /**

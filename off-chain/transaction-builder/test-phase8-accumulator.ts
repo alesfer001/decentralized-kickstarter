@@ -331,10 +331,10 @@ async function submitPledgeTx(
   campaignTypeScriptHash: string
 ): Promise<string> {
   const pledgeData = serializePledgeData({ campaignId, backerLockHash, amount });
-  const receiptData = serializeReceiptData(amount, backerLockHash);
+  const receiptData = serializeReceiptData(amount, backerLockHash, campaignTypeScriptHash, deadline);
   const pledgeLockArgs = serializePledgeLockArgs(campaignTypeScriptHash, deadline, backerLockHash);
   const pledgeCapacity = calculateCellCapacity(72, true, 65) + amount;
-  const receiptCapacity = calculateCellCapacity(40, true, 65);
+  const receiptCapacity = calculateCellCapacity(80, true, 65);
 
   const tx = ccc.Transaction.from({
     inputs: [{ previousOutput: campaignCell.outPoint }],

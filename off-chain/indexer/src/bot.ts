@@ -273,6 +273,16 @@ export class FinalizationBot {
             index: campaign.output_index,
           },
           creatorLockScript: creatorLockScript,
+          // The creator receives exactly the pledged amount; the cell's storage overhead goes
+          // back to the backer. Omitting the backer's lock lets the builder find it on chain.
+          pledgeAmount: BigInt(pledge.amount),
+          backerLockScript: pledge.backer_lock_code_hash
+            ? {
+                codeHash: pledge.backer_lock_code_hash,
+                hashType: pledge.backer_lock_hash_type || "type",
+                args: pledge.backer_lock_args || pledge.backer_lock_hash,
+              }
+            : undefined,
           deadlineBlock: BigInt(campaign.deadline_block),
         };
 

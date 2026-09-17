@@ -131,9 +131,24 @@ export const CAMPAIGN_DATA_SIZE = 65;
 export const PLEDGE_DATA_SIZE = 72;
 
 /**
- * Receipt data size in bytes (pledge_amount u64 + backer_lock_hash 32 bytes)
+ * Receipt data size in bytes:
+ * pledge_amount u64 + backer_lock_hash 32 + campaign_type_script_hash 32 + deadline_block u64
  */
-export const RECEIPT_DATA_SIZE = 40;
+export const RECEIPT_DATA_SIZE = 80;
+
+/**
+ * Storage overhead of a pledge cell, in shannons, on top of the pledged amount.
+ * Same formula as the transaction builder's calculateCellCapacity(72, true, 65), which covers
+ * the 250 CKB the cell actually occupies. The pledge lock returns it to the backer on
+ * release and refund, so it is a deposit, not a cost.
+ */
+export const PLEDGE_CELL_OVERHEAD = BigInt(Math.ceil((8 + PLEDGE_DATA_SIZE + 65 + 65) * 1.2)) * BigInt(100000000);
+
+/**
+ * Capacity of a receipt cell, in shannons. Same formula as the transaction builder. The
+ * backer reclaims it once the campaign is finalized.
+ */
+export const RECEIPT_CELL_CAPACITY = BigInt(Math.ceil((8 + RECEIPT_DATA_SIZE + 65 + 65) * 1.2)) * BigInt(100000000);
 
 /**
  * CKB Explorer base URLs per network

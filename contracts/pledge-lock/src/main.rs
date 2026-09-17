@@ -17,6 +17,7 @@ use ckb_std::{
         load_cell_type_hash,
         load_cell_lock_hash,
         load_cell_capacity,
+        load_cell_lock,
         load_input_since,
     },
     ckb_constants::Source,
@@ -44,6 +45,7 @@ const ERROR_LOAD_CAPACITY: i8 = 30;
 const ERROR_LOAD_LOCK_HASH: i8 = 31;
 const ERROR_INSUFFICIENT_OUTPUT: i8 = 32;
 const ERROR_OVERFLOW: i8 = 33;
+const ERROR_MIXED_PLEDGE_INPUTS: i8 = 34;
 
 // Merge errors
 const ERROR_NOT_A_MERGE: i8 = 40;
@@ -56,6 +58,10 @@ const ERROR_MERGE_LOCK_MISMATCH: i8 = 44;
 const MAX_FEE: u64 = 100_000_000;
 
 const PLEDGE_LOCK_ARGS_SIZE: usize = 72;
+
+/// Pledge cell data is 72 bytes; the pledged amount is the u64 LE at bytes 64-71
+const PLEDGE_DATA_SIZE: usize = 72;
+const PLEDGE_AMOUNT_OFFSET: usize = 64;
 
 /// Pledge lock script args layout (72 bytes):
 /// - campaign_type_script_hash: [u8; 32]  (bytes 0-31)
@@ -141,68 +147,121 @@ fn find_campaign_in_cell_deps(expected_hash: &[u8; 32]) -> Option<CampaignData> 
     None
 }
 
-/// Sum capacity of all cells in GroupInput (cells sharing this lock script).
-fn sum_group_input_capacity() -> Result<u64, i8> {
-    let mut total: u64 = 0;
+/// Capacity and pledged amount summed over GroupInput (cells sharing this lock script).
+///
+/// The amount is read from pledge data. The campaign accumulator only counts a pledge whose
+/// cell holds its amount plus its own storage cost, so for every pledge that could have
+/// made a campaign succeed, capacity - amount is the backer's storage overhead. A cell with
+/// no readable amount, or claiming more than it holds, was never counted; all of its
+/// capacity is treated as pledged, which is how v1.1 routed every pledge.
+fn sum_group_inputs() -> Result<(u64, u64), i8> {
+    let mut capacity: u64 = 0;
+    let mut amount: u64 = 0;
     for i in 0.. {
-        match load_cell_capacity(i, Source::GroupInput) {
-            Ok(cap) => {
-                total = total.checked_add(cap).ok_or(ERROR_OVERFLOW)?;
-            }
+        let cell_capacity = match load_cell_capacity(i, Source::GroupInput) {
+            Ok(c) => c,
             Err(SysError::IndexOutOfBound) => break,
             Err(_) => return Err(ERROR_LOAD_CAPACITY),
-        }
+        };
+        let cell_amount = match load_cell_data(i, Source::GroupInput) {
+            Ok(data) if data.len() >= PLEDGE_DATA_SIZE => {
+                let claimed = u64::from_le_bytes(
+                    data[PLEDGE_AMOUNT_OFFSET..PLEDGE_DATA_SIZE].try_into().unwrap(),
+                );
+                if claimed <= cell_capacity { claimed } else { cell_capacity }
+            }
+            _ => cell_capacity,
+        };
+        capacity = capacity.checked_add(cell_capacity).ok_or(ERROR_OVERFLOW)?;
+        amount = amount.checked_add(cell_amount).ok_or(ERROR_OVERFLOW)?;
     }
-    Ok(total)
+    Ok((capacity, amount))
 }
 
-/// Verify that outputs going to expected_lock_hash have total capacity >= min_capacity - MAX_FEE.
-fn find_output_to_lock_hash(expected_lock_hash: &[u8; 32], min_capacity: u64) -> Result<(), i8> {
-    let min_required = min_capacity.checked_sub(MAX_FEE).unwrap_or(0);
-    let mut total_to_destination: u64 = 0;
+/// Release and refund must not share a transaction with another pledge-lock group.
+///
+/// Each group checks the outputs going to its destination on its own. Two groups routing
+/// to the same lock (two backers' pledges both releasing to one creator) would each count
+/// the same output, and whoever built the transaction could keep the difference.
+fn ensure_only_pledge_group_in_inputs() -> Result<(), i8> {
+    let script = load_script().map_err(|_| ERROR_INVALID_ARGS)?;
+    let own_code_hash = script.code_hash().raw_data();
+    let own_lock_hash = load_cell_lock_hash(0, Source::GroupInput).map_err(|_| ERROR_LOAD_LOCK_HASH)?;
 
+    for i in 0.. {
+        let lock = match load_cell_lock(i, Source::Input) {
+            Ok(l) => l,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_LOCK_HASH),
+        };
+        if lock.code_hash().raw_data() != own_code_hash {
+            continue;
+        }
+        let lock_hash = load_cell_lock_hash(i, Source::Input).map_err(|_| ERROR_LOAD_LOCK_HASH)?;
+        if lock_hash != own_lock_hash {
+            debug!("Input {} is another pledge-lock group", i);
+            return Err(ERROR_MIXED_PLEDGE_INPUTS);
+        }
+    }
+    Ok(())
+}
+
+/// Total capacity of outputs locked by `lock_hash`
+fn sum_outputs_to(lock_hash: &[u8; 32]) -> Result<u64, i8> {
+    let mut total: u64 = 0;
     for i in 0.. {
         match load_cell_lock_hash(i, Source::Output) {
             Ok(hash) => {
-                if hash == *expected_lock_hash {
-                    let cap = load_cell_capacity(i, Source::Output)
-                        .map_err(|_| ERROR_LOAD_CAPACITY)?;
-                    total_to_destination = total_to_destination
-                        .checked_add(cap)
-                        .ok_or(ERROR_OVERFLOW)?;
+                if hash == *lock_hash {
+                    let cap = load_cell_capacity(i, Source::Output).map_err(|_| ERROR_LOAD_CAPACITY)?;
+                    total = total.checked_add(cap).ok_or(ERROR_OVERFLOW)?;
                 }
             }
             Err(SysError::IndexOutOfBound) => break,
             Err(_) => return Err(ERROR_LOAD_LOCK_HASH),
         }
     }
+    Ok(total)
+}
 
-    if total_to_destination >= min_required {
+/// Require at least `required` shannons going to `lock_hash`
+fn require_outputs_to(lock_hash: &[u8; 32], required: u64) -> Result<(), i8> {
+    if sum_outputs_to(lock_hash)? >= required {
         Ok(())
     } else {
         Err(ERROR_INSUFFICIENT_OUTPUT)
     }
 }
 
-/// D-04: After deadline + Success -> output must go to creator_lock_hash
-fn validate_release(_lock_args: &PledgeLockArgs, campaign: &CampaignData) -> i8 {
-    let total_input_capacity = match sum_group_input_capacity() {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-    match find_output_to_lock_hash(&campaign.creator_lock_hash, total_input_capacity) {
+/// D-04: After deadline + Success -> the pledged amount goes to the creator, and the cell's
+/// storage overhead goes back to the backer. The fee (at most MAX_FEE) comes out of the
+/// overhead, so the creator receives exactly what was pledged.
+fn validate_release(lock_args: &PledgeLockArgs, campaign: &CampaignData) -> i8 {
+    let result = ensure_only_pledge_group_in_inputs()
+        .and_then(|_| sum_group_inputs())
+        .and_then(|(capacity, amount)| {
+            let overhead = capacity - amount; // amount <= capacity per sum_group_inputs
+            if campaign.creator_lock_hash == lock_args.backer_lock_hash {
+                // A creator backing their own campaign: both shares land in one wallet
+                return require_outputs_to(&campaign.creator_lock_hash, capacity.saturating_sub(MAX_FEE));
+            }
+            require_outputs_to(&campaign.creator_lock_hash, amount)?;
+            require_outputs_to(&lock_args.backer_lock_hash, overhead.saturating_sub(MAX_FEE))
+        });
+    match result {
         Ok(()) => 0,
         Err(code) => code,
     }
 }
 
-/// D-05/D-06: After deadline + Failed (or no cell_dep) -> output must go to backer_lock_hash
+/// D-05/D-06: After deadline + Failed (or no cell_dep) -> everything goes back to the backer
 fn validate_refund(lock_args: &PledgeLockArgs) -> i8 {
-    let total_input_capacity = match sum_group_input_capacity() {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-    match find_output_to_lock_hash(&lock_args.backer_lock_hash, total_input_capacity) {
+    let result = ensure_only_pledge_group_in_inputs()
+        .and_then(|_| sum_group_inputs())
+        .and_then(|(capacity, _)| {
+            require_outputs_to(&lock_args.backer_lock_hash, capacity.saturating_sub(MAX_FEE))
+        });
+    match result {
         Ok(()) => 0,
         Err(code) => code,
     }

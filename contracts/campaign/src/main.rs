@@ -19,7 +19,7 @@ use ckb_std::{
     debug,
     high_level::{
         load_script, load_script_hash, load_cell_data, load_cell_capacity, load_cell_lock,
-        load_input_since,
+        load_cell_occupied_capacity, load_input_since,
     },
     ckb_constants::Source,
     error::SysError,
@@ -44,6 +44,7 @@ const ERROR_STATUS_NOT_JUSTIFIED: i8 = 18;
 const ERROR_OVERFLOW: i8 = 19;
 const ERROR_LOAD_CELL: i8 = 20;
 const ERROR_MULTIPLE_CAMPAIGN_CELLS: i8 = 21;
+const ERROR_PLEDGE_UNDERFUNDED: i8 = 22;
 
 /// Grace period: ~180 days at 8s/block = 1,944,000 blocks
 /// A finalized campaign cell can only be destroyed after this period past deadline,
@@ -223,6 +224,19 @@ fn sum_campaign_pledges(
         let amount = u64::from_le_bytes(
             data[PLEDGE_AMOUNT_OFFSET..PLEDGE_DATA_SIZE].try_into().unwrap(),
         );
+
+        // The amount is only a claim written in data. Count it only when the cell actually
+        // holds it on top of its own storage cost, otherwise a cell holding a few hundred
+        // CKB could claim the whole funding goal and push the campaign to Success. The
+        // storage cost on top is what the pledge lock later returns to the backer.
+        let capacity = load_cell_capacity(i, source).map_err(|_| ERROR_LOAD_CELL)?;
+        let occupied = load_cell_occupied_capacity(i, source).map_err(|_| ERROR_LOAD_CELL)?;
+        let required = amount.checked_add(occupied).ok_or(ERROR_OVERFLOW)?;
+        if capacity < required {
+            debug!("Pledge cell {} claims {} but holds {} ({} occupied)", i, amount, capacity, occupied);
+            return Err(ERROR_PLEDGE_UNDERFUNDED);
+        }
+
         total = match total.checked_add(amount) {
             Some(v) => v,
             None => return Err(ERROR_OVERFLOW),

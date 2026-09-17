@@ -1,6 +1,6 @@
 import { ccc } from "@ckb-ccc/core";
-import { CampaignStatus, CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams, CreatePledgeWithReceiptParams, PermissionlessReleaseParams, PermissionlessRefundParams, MergeContributionsParams } from "./types";
-import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize, serializeReceiptData, serializePledgeLockArgs, encodeDeadlineBlockAsLockArgs, serializeCampaignTypeArgs, readTotalPledged, withTotalPledged, withCampaignStatus, readFundingGoal } from "./serializer";
+import { CampaignStatus, CampaignParams, PledgeParams, ContractInfo, TxResult, FinalizeCampaignParams, RefundPledgeParams, ReleasePledgeParams, DestroyCampaignParams, CreatePledgeWithReceiptParams, PermissionlessReleaseParams, PermissionlessRefundParams, MergeContributionsParams, ReclaimReceiptParams } from "./types";
+import { serializeCampaignData, serializePledgeData, serializeCampaignDataWithStatus, calculateCellCapacity, getMetadataSize, serializeReceiptData, serializePledgeLockArgs, encodeDeadlineBlockAsLockArgs, serializeCampaignTypeArgs, readTotalPledged, withTotalPledged, withCampaignStatus, readFundingGoal, readPledgeAmount } from "./serializer";
 import { createCkbClient, NetworkType } from "./ckbClient";
 
 /** Byte length of the v1.2 campaign type script args: TypeID (32) + pledge-lock code hash (32) */
@@ -589,8 +589,13 @@ export class TransactionBuilder {
       amount: params.amount,
     });
 
-    // Serialize receipt cell data (40 bytes): pledge_amount + backer_lock_hash
-    const receiptData = serializeReceiptData(params.amount, params.backerLockHash);
+    // Serialize receipt cell data (80 bytes): pledge_amount + backer_lock_hash + campaign + deadline
+    const receiptData = serializeReceiptData(
+      params.amount,
+      params.backerLockHash,
+      campaignTypeScriptHash,
+      params.deadlineBlock
+    );
 
     // Serialize pledge lock args (72 bytes): campaign_type_script_hash + deadline + backer_lock_hash
     const pledgeLockArgs = serializePledgeLockArgs(
@@ -604,7 +609,7 @@ export class TransactionBuilder {
     const pledgeBaseCapacity = calculateCellCapacity(pledgeDataSize, true, 65);
     const pledgeTotalCapacity = pledgeBaseCapacity + params.amount;
 
-    const receiptDataSize = 40;
+    const receiptDataSize = 80;
     const receiptCapacity = calculateCellCapacity(receiptDataSize, true, 65);
 
     // Get backer's lock script (backer owns the receipt cell)
@@ -726,11 +731,27 @@ export class TransactionBuilder {
     // Since value: absolute block number for deadline enforcement
     const sinceValue = params.deadlineBlock;
 
-    // Deduct tx fee from pledge capacity (pledge lock allows up to 1 CKB fee deduction)
-    const txFee = BigInt(100000); // 0.001 CKB fee — well within MAX_FEE (1 CKB)
-    const creatorCapacity = params.pledgeCapacity - txFee;
+    // The creator receives exactly the pledged amount. The rest of the cell is the backer's
+    // storage overhead and goes back to them, less the fee (pledge lock allows up to 1 CKB).
+    const txFee = BigInt(100000); // 0.001 CKB
+    const creatorLock = ccc.Script.from({
+      codeHash: params.creatorLockScript.codeHash,
+      hashType: params.creatorLockScript.hashType as ccc.HashTypeLike,
+      args: params.creatorLockScript.args,
+    });
+    const { amount: pledgeAmount, backerLock } = await this.resolvePledgeRouting(params);
+    if (pledgeAmount > params.pledgeCapacity) {
+      throw new Error(`Pledge amount ${pledgeAmount} exceeds cell capacity ${params.pledgeCapacity}`);
+    }
 
-    // Build the transaction
+    // A creator backing their own campaign: one output, both shares land in the same wallet
+    const outputs = creatorLock.eq(backerLock)
+      ? [{ capacity: params.pledgeCapacity - txFee, lock: creatorLock }]
+      : [
+          { capacity: pledgeAmount, lock: creatorLock },
+          { capacity: params.pledgeCapacity - pledgeAmount - txFee, lock: backerLock },
+        ];
+
     const tx = ccc.Transaction.from({
       inputs: [
         {
@@ -742,18 +763,8 @@ export class TransactionBuilder {
           since: sinceValue,
         },
       ],
-      outputs: [
-        {
-          // Creator receives the pledge funds (minus small fee)
-          capacity: creatorCapacity,
-          lock: {
-            codeHash: params.creatorLockScript.codeHash,
-            hashType: params.creatorLockScript.hashType as "type" | "data" | "data1" | "data2",
-            args: params.creatorLockScript.args,
-          },
-        },
-      ],
-      outputsData: ["0x"],
+      outputs,
+      outputsData: outputs.map(() => "0x"),
       cellDeps: [
         {
           // Campaign cell (status = Success, for pledge lock verification)
@@ -784,6 +795,83 @@ export class TransactionBuilder {
     const txHash = await signer.sendTransaction(tx);
     console.log(`Permissionless release completed! TX: ${txHash}`);
 
+    return txHash;
+  }
+
+  /**
+   * The pledged amount and the backer's full lock script for a release.
+   * The pledge cell only stores the backer's lock *hash* (in its lock args), so when the
+   * caller has no lock script it is looked up among the outputs of the transaction that
+   * created the pledge cell, which always pays the backer something (receipt or change).
+   */
+  private async resolvePledgeRouting(
+    params: PermissionlessReleaseParams
+  ): Promise<{ amount: bigint; backerLock: ccc.Script }> {
+    const needsChain = params.pledgeAmount === undefined || !params.backerLockScript;
+    const pledgeTx = needsChain ? await this.client.getTransaction(params.pledgeOutPoint.txHash) : undefined;
+    if (needsChain && !pledgeTx?.transaction) {
+      throw new Error(`Pledge transaction ${params.pledgeOutPoint.txHash} not found`);
+    }
+
+    const amount =
+      params.pledgeAmount ??
+      readPledgeAmount(ccc.hexFrom(pledgeTx!.transaction!.outputsData[params.pledgeOutPoint.index]));
+
+    if (params.backerLockScript) {
+      return {
+        amount,
+        backerLock: ccc.Script.from({
+          codeHash: params.backerLockScript.codeHash,
+          hashType: params.backerLockScript.hashType as ccc.HashTypeLike,
+          args: params.backerLockScript.args,
+        }),
+      };
+    }
+
+    const pledgeLockArgs = ccc.bytesFrom(pledgeTx!.transaction!.outputs[params.pledgeOutPoint.index].lock.args);
+    const backerLockHash = ccc.hexFrom(pledgeLockArgs.slice(40, 72));
+    const backerLock = pledgeTx!.transaction!.outputs
+      .map((o) => o.lock)
+      .find((lock) => lock.hash() === backerLockHash);
+    if (!backerLock) {
+      throw new Error(`Backer lock script for ${backerLockHash} not found in the pledge transaction; pass backerLockScript`);
+    }
+    return { amount, backerLock };
+  }
+
+  /**
+   * Reclaim a receipt cell's capacity once its campaign is finalized.
+   *
+   * The receipt is locked by the backer, so the backer signs. With the finalized campaign
+   * cell as a cell dep the receipt type script allows destruction on its own — the pledge
+   * has already been (or will be) routed by the pledge lock. The fee comes out of the
+   * receipt, so the backer needs no other cells.
+   */
+  async reclaimReceipt(signer: ccc.Signer, params: ReclaimReceiptParams): Promise<string> {
+    console.log("Building reclaim receipt transaction...");
+
+    const receiptTx = await this.client.getTransaction(params.receiptOutPoint.txHash);
+    const receiptOutput = receiptTx?.transaction?.outputs[params.receiptOutPoint.index];
+    if (!receiptOutput) {
+      throw new Error(`Receipt cell ${params.receiptOutPoint.txHash}:${params.receiptOutPoint.index} not found`);
+    }
+
+    const tx = ccc.Transaction.from({
+      inputs: [{ previousOutput: params.receiptOutPoint }],
+      outputs: [{ capacity: receiptOutput.capacity, lock: receiptOutput.lock }],
+      outputsData: ["0x"],
+      cellDeps: [
+        { outPoint: params.campaignCellDep, depType: "code" },
+        {
+          outPoint: { txHash: this.receiptContract.txHash, index: this.receiptContract.index },
+          depType: "code",
+        },
+      ],
+    });
+
+    await tx.completeFeeChangeToOutput(signer, 0, 1000);
+    const txHash = await signer.sendTransaction(tx);
+    console.log(`Receipt reclaimed! TX: ${txHash}`);
     return txHash;
   }
 
