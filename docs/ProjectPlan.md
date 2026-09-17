@@ -1698,6 +1698,12 @@ The `[DIS]` (topic 10609) finished at 16 of the 30 likes needed in its week and 
 3. Rewrite `docs/grant/PROPOSAL.md` for the $5k testnet scope and post the new `[DIS]`.
 4. Later proposal: fee enforcement, config cell, multisig treasury, Scalebit audit, mainnet launch.
 
+**2026-09-17:** Testnet end-to-end verification (live Vercel + Render indexer + bot)
+
+- **Script wallets:** a success campaign (150 CKB pledged, goal 100) and a failure campaign (100 CKB, goal 1000). The bot finalized both, released and refunded; creator received exactly 150 CKB, backer got back exactly 603.998 CKB (success overhead + whole failed cell, less two 0.001 CKB fees); both receipts reclaimed for the fee only.
+- **JoyID wallet through the live frontend:** a 100 CKB pledge deliberately collided with a helper wallet's pledge fired while the JoyID popup was open. The frontend showed the retry toasts, asked for a second approval and the rebuilt pledge landed (`0xde92db1d…6ace7`, campaign total 200 CKB). The bot finalized Success and released it: creator 100 CKB, JoyID wallet 251.999 CKB. The receipt was then reclaimed from the deposit card in the same page session (261.99998486 CKB back, tx `0x6400ba9c…3cd5`).
+- **Bug found and fixed (PR #3):** the builder and frontend looked up the live campaign cell through the CCC client cache, which kept returning a campaign cell the wallet had created itself after the bot spent it, so a same-session reclaim used a dead cell dep. Both now use `findCellsOnChain`. The JoyID reclaim above ran on the fixed frontend.
+
 **2026-09-17:** Testnet redeploy — v1.2 Phase 8 + fund-routing fixes
 
 - Reclaimed the five v1.1 contract cells (tx `0x4ad88d73…43c6`, 130,497 CKB) to fund the deploy; deployer went from 22.7k to 153.2k CKB.
