@@ -554,10 +554,25 @@ export class TransactionBuilder {
         console.warn(
           `Pledge attempt ${attempt} lost the race for the campaign cell, retrying...`
         );
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await this.waitForCampaignCellToMove(typeArgs, campaignCell.outPoint);
       }
     }
     throw lastError;
+  }
+
+  /**
+   * Wait until the live campaign cell is no longer `spent`, so a retried pledge doesn't
+   * rebuild on the same cell. The live cell is read from the chain, which only moves once
+   * the winning pledge commits, so a fixed short delay is not enough. Gives up quietly after
+   * the timeout and lets the caller retry anyway.
+   */
+  private async waitForCampaignCellToMove(campaignTypeArgs: string, spent: ccc.OutPoint, timeoutMs = 60000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const cell = await this.findLiveCampaignCell(campaignTypeArgs);
+      if (!cell.outPoint.eq(spent)) return;
+    }
   }
 
   /**

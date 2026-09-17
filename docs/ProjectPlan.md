@@ -1705,10 +1705,11 @@ State at end of session:
 - DIS "ready" checklist (target Mon 2026-10-05): item 1 (Phase 8 live on testnet + E2E) done. Item 3 partly done (pledge form wording). Open: item 2 (CrowdCell rebrand + Cellgrid landing page), item 3 (deadline timezone bug, silent 1-hour minimum deadline, "Destroy Campaign" button shown ~180 days early), item 4 (rewrite `docs/grant/PROPOSAL.md` for $5k, bilingual title), item 5 (line up ~20-25 likes, project-thread update a few days before).
 
 Next session, in order:
-1. Check devnet suite results if not recorded: `test-lifecycle.ts`, `test-v1.1-lifecycle.ts`, `test-v1.1-security.ts` and a three-simultaneous-pledges race were re-running after the on-chain lookup fix (exploits 14/14, accounting 36/36, accumulator 18/18 already passed with it).
-2. Quick UX fixes (checklist item 3).
-3. CrowdCell rebrand + Cellgrid landing page (item 2).
-4. Proposal rewrite and likes outreach (items 4-5).
+1. Quick UX fixes (checklist item 3).
+2. CrowdCell rebrand + Cellgrid landing page (item 2), started by 09-24 at the latest.
+3. Proposal rewrite and likes outreach (items 4-5), ~09-28 to 10-02.
+
+Devnet suites after the on-chain lookup fix: exploits 14/14, accounting 36/36, accumulator 18/18, lifecycle 22/22, v1.1 lifecycle 17/17, security 3/3. The three-simultaneous-pledges race then failed (100 of 450 CKB landed): the tx-builder retry slept a fixed 1.5s and, now reading committed cells only, kept rebuilding on the spent cell. It now waits until the live campaign cell moves (as the frontend already did); race passes, 450 CKB.
 
 Loose ends:
 - Officeyutong review requested on PR #2 (post-merge); apply feedback as follow-up PRs.
