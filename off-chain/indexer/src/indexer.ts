@@ -140,6 +140,7 @@ export class CampaignIndexer {
   private pledgeCodeHash: string = "";
   private receiptCodeHash: string = "";
   private pledgeLockCodeHash: string = "";
+  private initialSyncComplete = false;
 
   constructor(rpcUrl: string, db: Database) {
     this.client = createCkbClient(rpcUrl);
@@ -160,6 +161,15 @@ export class CampaignIndexer {
   setBot(bot: FinalizationBot): void {
     this.bot = bot;
     console.log("Bot injected into indexer");
+  }
+
+  /**
+   * Whether a full index has been written to the database since startup.
+   * The database starts empty on every boot, so until then the API would
+   * answer "no campaigns" rather than "not loaded yet".
+   */
+  isReady(): boolean {
+    return this.initialSyncComplete;
   }
 
   /**
@@ -438,6 +448,7 @@ export class CampaignIndexer {
     // Atomically replace all data in DB
     try {
       this.db.replaceLiveCells(dbCampaigns, dbPledges, dbReceipts);
+      this.initialSyncComplete = true;
     } catch (error) {
       console.error("Error replacing live cells in DB:", error);
     }

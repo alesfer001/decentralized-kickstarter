@@ -9,6 +9,8 @@ import { u64ToHexLE, serializeMetadataHex, campaignTypeArgs } from "@/lib/serial
 import { useDevnet } from "@/components/DevnetContext";
 import { useToast } from "@/components/Toast";
 import { fetchBlockNumber, fetchCampaign } from "@/lib/api";
+import { IndexerPhase } from "@/lib/types";
+import { useIndexerReady, IndexerWaitNotice } from "@/components/IndexerStatus";
 
 export default function CreateCampaignPage() {
   const router = useRouter();
@@ -31,12 +33,16 @@ export default function CreateCampaignPage() {
   const [goalError, setGoalError] = useState<string | null>(null);
   const [deadlineError, setDeadlineError] = useState<string | null>(null);
 
-  // Fetch current block on mount
+  const { phase: indexerPhase, elapsedSeconds, retry: retryIndexer } = useIndexerReady();
+  const indexerUp = indexerPhase === IndexerPhase.Ready || indexerPhase === IndexerPhase.Syncing;
+
+  // Fetch current block once the indexer answers (the tip comes from the node, so a sync in progress is fine)
   useEffect(() => {
+    if (!indexerUp) return;
     fetchBlockNumber()
       .then(setCurrentBlock)
       .catch(() => {});
-  }, []);
+  }, [indexerUp]);
 
   function validateTitle(): boolean {
     if (!title.trim()) {
@@ -235,6 +241,10 @@ export default function CreateCampaignPage() {
       <p className="text-zinc-600 dark:text-zinc-400 mb-8">
         Start a new crowdfunding campaign on CKB
       </p>
+
+      {!indexerUp && (
+        <IndexerWaitNotice phase={indexerPhase} elapsedSeconds={elapsedSeconds} onRetry={retryIndexer} />
+      )}
 
       {!signer && (
         <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 mb-6">
