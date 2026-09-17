@@ -1668,7 +1668,7 @@ Also: 10 unit tests in the campaign contract (data round-trip, status-vs-goal ju
 - `datetimeToBlockNumber` enforces a 1-hour (360-block) minimum deadline, so a shorter campaign cannot be created through the UI at all. Deliberate, but it silently overrides what the user picked rather than saying so.
 - The same function does `new Date(datetimeString + "Z")`, treating a local datetime-local value as UTC. Pre-existing timezone bug.
 - "Destroy Campaign & Reclaim CKB" appears as soon as distribution completes, but the campaign type script requires `deadline + grace period` — the button will fail with error code 13 for ~180 days. Pre-existing for Success campaigns; M-01 extends it to Failed ones too.
-- A React hydration mismatch logs on every page load, inside Next.js's own `<Next.Metadata>` internals rather than project components. Pre-existing.
+- A React hydration mismatch logs on every page load, inside Next.js's own `<Next.Metadata>` internals rather than project components. *(2026-09-17: only happens in the automation Chrome profile, not in a clean browser. Not an app bug, see below.)*
 
 **Not yet done (plus deployment):** testnet redeploy outstanding. *(2026-09-17: pledge-contention retry added to the frontend, see the entry below.)* The frontend continues to duplicate the transaction-builder's logic inline rather than importing it, which is why every contract change has to be made twice. Receipt destruction is currently unexercised by any builder method, so M-02 breaks nothing today, but `seed-frontend-test.ts`'s `consumeCells` cleanup will now fail on receipts unless a pledge is consumed alongside.
 
@@ -1693,10 +1693,30 @@ The `[DIS]` (topic 10609) finished at 16 of the 30 likes needed in its week and 
 - **Resubmit after a visible change, not before.** Target ~2-3 weeks: Phase 8 live on testnet and at least one product change shipped, so the post shows momentum rather than promising it. Keep the gap between the project-thread update and the DIS short, and line up likes before the one-week clock starts. Bilingual title still worth doing since it costs nothing.
 
 **New order of work:**
-1. Finish Phase 8 on testnet: contract redeploy, frontend pledge-contention retry.
+1. ~~Finish Phase 8 on testnet: contract redeploy, frontend pledge-contention retry.~~ Done 2026-09-17, see the entries below.
 2. Productisation: CrowdCell rebrand, a proper landing page (**Cellgrid** direction chosen 2026-09-10 from three Fable mockups: CKB cells as the visual system, cell-meter on `CampaignCard`, animated canvas grid behind the hero (kept, not trimmed), settlement diagram, "who can do what" permission matrix. Fixes before building: the matrix must show creators *can* pledge, anyone can finalize when the status verifies, and the grace-period fail-safe is open to anyone after the grace period; drop the stale "65 B header" line; no em dashes or arrows in copy. Mockups in `docs/design/landing/` (local, `docs/` is gitignored). **Poster** direction kept there as the pivot option if the audience shifts to general backers, e.g. after RGB++), creator and backer dashboards, an indexer cold-start experience that says it is waking up instead of "Offline", and the UX gaps from the Phase 8 browser run (deadline timezone bug, silent 1-hour minimum deadline, "Destroy Campaign" button shown ~180 days before it can succeed). Final feature list pending Neon's answer on what felt missing.
 3. Rewrite `docs/grant/PROPOSAL.md` for the $5k testnet scope and post the new `[DIS]`.
 4. Later proposal: fee enforcement, config cell, multisig treasury, Scalebit audit, mainnet launch.
+
+**2026-09-17 — Where to pick up**
+
+State at end of session:
+- v1.2 Phase 8 plus the fund-routing fixes are merged to `main` (PR #2 `c64db86`, PR #3 `13c1f01`), deployed on testnet, and live on Vercel and Render. End-to-end verified on testnet with script wallets and a JoyID wallet (entries below).
+- DIS "ready" checklist (target Mon 2026-10-05): item 1 (Phase 8 live on testnet + E2E) done. Item 3 partly done (pledge form wording). Open: item 2 (CrowdCell rebrand + Cellgrid landing page), item 3 (deadline timezone bug, silent 1-hour minimum deadline, "Destroy Campaign" button shown ~180 days early), item 4 (rewrite `docs/grant/PROPOSAL.md` for $5k, bilingual title), item 5 (line up ~20-25 likes, project-thread update a few days before).
+
+Next session, in order:
+1. Check devnet suite results if not recorded: `test-lifecycle.ts`, `test-v1.1-lifecycle.ts`, `test-v1.1-security.ts` and a three-simultaneous-pledges race were re-running after the on-chain lookup fix (exploits 14/14, accounting 36/36, accumulator 18/18 already passed with it).
+2. Quick UX fixes (checklist item 3).
+3. CrowdCell rebrand + Cellgrid landing page (item 2).
+4. Proposal rewrite and likes outreach (items 4-5).
+
+Loose ends:
+- Officeyutong review requested on PR #2 (post-merge); apply feedback as follow-up PRs.
+- Rotate the testnet `BOT_PRIVATE_KEY` on Render: it appeared in a screenshot during the env var update. Testnet only, low risk.
+- Testnet has finalized "v1.2 testnet E2E" campaigns (success, failure, JoyID) listed on the live site. Harmless, but visible.
+- Helper wallet key for testnet E2E in `deployment/testnet-e2e-helper.key` (gitignored), ~780 test CKB left. Deployer ~8.5k CKB left after the redeploy.
+- The 7 v1.1 testnet campaign cells and 5 v1.1 receipts are permanently unspendable (their contract cells were reclaimed to fund the v1.2 deploy).
+- Contract binaries are unoptimized (~141k CKB to deploy all five). A size profile only saved 9%; type-id upgradeable deployment would avoid paying the full cost again on the next redeploy.
 
 **2026-09-17:** Testnet end-to-end verification (live Vercel + Render indexer + bot)
 
@@ -1708,8 +1728,8 @@ The `[DIS]` (topic 10609) finished at 16 of the 30 likes needed in its week and 
 
 - Reclaimed the five v1.1 contract cells (tx `0x4ad88d73…43c6`, 130,497 CKB) to fund the deploy; deployer went from 22.7k to 153.2k CKB.
 - Deployed all five contracts (binaries verified identical to the devnet-tested build by data hash); hashes in `deployment/deployed-contracts-testnet.json`.
-- Vercel: 10 `NEXT_PUBLIC_*_CODE_HASH/_TX_HASH` production vars updated and verified via `vercel env pull`; production deployed from the `v1.2-phase8-accumulator` branch (PR #2, review requested from Officeyutong; merge to `main` pending).
-- Render indexer: env vars and redeploy need the dashboard.
+- Vercel: 10 `NEXT_PUBLIC_*_CODE_HASH/_TX_HASH` production vars updated and verified via `vercel env pull`; production deployed; PR #2 merged to `main` (review requested from Officeyutong, still open).
+- Render indexer: 10 env vars set (5 code hashes updated, 5 `*_TX_HASH` added; without them the indexer fell back to hardcoded v1.1 tx hashes) and redeployed from `main` after PR #2 merged (`c64db86`). Live and synced.
 
 **2026-09-17:** Fund-routing fixes from a balance accounting test (contracts changed, devnet only)
 
