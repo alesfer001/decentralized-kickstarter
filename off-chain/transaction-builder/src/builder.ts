@@ -1010,9 +1010,13 @@ export class TransactionBuilder {
             args: params.pledgeLockArgs,
           },
           type: {
+            // Same type script as the inputs (args = receipt code hash). The pledge lock
+            // rejects a merge whose output type differs: with different args the pledge type
+            // script would see the inputs and output in separate groups and skip its
+            // amount-sum check.
             codeHash: this.pledgeContract.codeHash,
             hashType: this.pledgeContract.hashType,
-            args: "0x",
+            args: this.receiptContract.codeHash,
           },
         },
       ],

@@ -53,6 +53,8 @@ const ERROR_NO_MERGE_OUTPUT: i8 = 41;
 const ERROR_MULTIPLE_MERGE_OUTPUTS: i8 = 42;
 const ERROR_MERGE_CAPACITY_MISMATCH: i8 = 43;
 const ERROR_MERGE_LOCK_MISMATCH: i8 = 44;
+const ERROR_MERGE_TYPE_MISMATCH: i8 = 45;
+const ERROR_MERGE_AMOUNT_MISMATCH: i8 = 46;
 
 /// Maximum fee deducted from pledge capacity during release/refund (1 CKB = 100M shannons)
 const MAX_FEE: u64 = 100_000_000;
@@ -327,11 +329,13 @@ fn validate_merge(_lock_args: &PledgeLockArgs) -> i8 {
     // Scan all outputs for cells matching our lock hash
     let mut matching_output_count: usize = 0;
     let mut matching_output_cap: u64 = 0;
+    let mut matching_output_index: usize = 0;
     for i in 0.. {
         match load_cell_lock_hash(i, Source::Output) {
             Ok(hash) => {
                 if hash == our_lock_hash {
                     matching_output_count += 1;
+                    matching_output_index = i;
                     let cap = match load_cell_capacity(i, Source::Output) {
                         Ok(c) => c,
                         Err(_) => return ERROR_LOAD_CAPACITY,
@@ -360,7 +364,58 @@ fn validate_merge(_lock_args: &PledgeLockArgs) -> i8 {
         return ERROR_MERGE_CAPACITY_MISMATCH;
     }
 
-    0
+    match validate_merge_preserves_pledge(matching_output_index) {
+        Ok(()) => 0,
+        Err(code) => code,
+    }
+}
+
+/// A merge must keep the pledge type script and the total pledged amount.
+///
+/// Capacity alone is not enough. If the merged cell carried a different type script (the
+/// same pledge code with other args), the pledge type script would run the inputs and the
+/// output as separate groups, a destruction and a creation, and never compare amounts. A
+/// backer could then rewrite a counted pledge's amount after the campaign succeeded, and a
+/// release would pay the creator the rewritten amount.
+fn validate_merge_preserves_pledge(output_index: usize) -> Result<(), i8> {
+    let input_type = load_cell_type_hash(0, Source::GroupInput)
+        .map_err(|_| ERROR_LOAD_LOCK_HASH)?
+        .ok_or(ERROR_MERGE_TYPE_MISMATCH)?;
+
+    let mut total_amount: u64 = 0;
+    for i in 0.. {
+        let type_hash = match load_cell_type_hash(i, Source::GroupInput) {
+            Ok(t) => t,
+            Err(SysError::IndexOutOfBound) => break,
+            Err(_) => return Err(ERROR_LOAD_LOCK_HASH),
+        };
+        if type_hash != Some(input_type) {
+            debug!("Merge: input {} has a different type script", i);
+            return Err(ERROR_MERGE_TYPE_MISMATCH);
+        }
+        let data = load_cell_data(i, Source::GroupInput).map_err(|_| ERROR_LOAD_CAPACITY)?;
+        if data.len() < PLEDGE_DATA_SIZE {
+            return Err(ERROR_MERGE_AMOUNT_MISMATCH);
+        }
+        let amount = u64::from_le_bytes(data[PLEDGE_AMOUNT_OFFSET..PLEDGE_DATA_SIZE].try_into().unwrap());
+        total_amount = total_amount.checked_add(amount).ok_or(ERROR_OVERFLOW)?;
+    }
+
+    let output_type = load_cell_type_hash(output_index, Source::Output).map_err(|_| ERROR_LOAD_LOCK_HASH)?;
+    if output_type != Some(input_type) {
+        debug!("Merge: output type script differs from the inputs");
+        return Err(ERROR_MERGE_TYPE_MISMATCH);
+    }
+    let data = load_cell_data(output_index, Source::Output).map_err(|_| ERROR_LOAD_CAPACITY)?;
+    if data.len() < PLEDGE_DATA_SIZE {
+        return Err(ERROR_MERGE_AMOUNT_MISMATCH);
+    }
+    let output_amount = u64::from_le_bytes(data[PLEDGE_AMOUNT_OFFSET..PLEDGE_DATA_SIZE].try_into().unwrap());
+    if output_amount != total_amount {
+        debug!("Merge: output amount {} != inputs {}", output_amount, total_amount);
+        return Err(ERROR_MERGE_AMOUNT_MISMATCH);
+    }
+    Ok(())
 }
 
 pub fn program_entry() -> i8 {

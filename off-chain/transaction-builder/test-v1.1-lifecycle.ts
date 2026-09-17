@@ -1,462 +1,238 @@
 /**
- * v1.1 Lifecycle Integration Tests
+ * v1.1 Lifecycle Integration Tests (on the v1.2 pledge path)
  *
- * Tests the full trustless fund distribution flow introduced in v1.1:
- * - Pledge with receipt (atomic pledge + receipt cell creation)
- * - Permissionless release (third party triggers fund release to creator)
+ * Tests the trustless fund distribution flow:
+ * - Pledge with receipt (campaign accumulator + pledge + receipt in one transaction)
+ * - Permissionless release (third party triggers release to the creator)
  * - Permissionless refund (backer reclaims CKB after failure)
  * - Pledge merging (combine N pledge cells into 1)
  *
  * Scenarios:
- *   1. Success: create campaign -> pledge with receipt -> finalize success -> permissionless release
+ *   1. Success: create campaign -> pledge with receipt -> finalize success -> third-party release
  *   2. Failure: create campaign -> pledge with receipt -> finalize failure -> permissionless refund
- *   3. Merge:  create campaign -> 3 pledges -> merge -> release from merged cell
+ *   3. Merge:  create campaign -> 3 pledges -> merge -> release from merged cell -> reclaim receipts
+ *
+ * A pledge transaction outputs [campaign, pledge, receipt]; the pledge is output 1.
  *
  * Prerequisites:
- *   1. OffCKB devnet running (offckb node)
- *   2. All 4 contracts deployed (npx ts-node scripts/deploy-contracts.ts)
+ *   1. OffCKB devnet running (nvm use v18 && offckb node)
+ *   2. All 5 contracts deployed (npx ts-node deploy-contracts.ts)
  *
  * Run with: npx ts-node test-v1.1-lifecycle.ts
  */
 
-/**
- * NOTE (v1.2 Phase 8): a createPledgeWithReceipt transaction now also consumes and
- * re-creates the campaign cell, so its outputs are [campaign, pledge, receipt] — the
- * pledge moved from index 0 to index 1. The indices below were updated for that but this
- * script has NOT been re-run since; see test-phase8-accumulator.ts for the verified path.
- */
-
-import * as fs from "fs";
-import * as path from "path";
 import { ccc } from "@ckb-ccc/core";
-import { TransactionBuilder } from "./src";
-import type { ContractInfo } from "./src/types";
 import { CampaignStatus } from "./src/types";
-import { createCkbClient } from "./src/ckbClient";
-import { serializePledgeLockArgs } from "./src/serializer";
+import { readCampaignStatus, readPledgeAmount, serializePledgeLockArgs } from "./src/serializer";
+import {
+  CKB,
+  Checks,
+  setupDevnet,
+  waitForTx,
+  waitForBlock,
+  campaignTypeArgs,
+  outputOf,
+  lockLike,
+} from "./test-helpers";
 
-const rpcUrl = "http://127.0.0.1:8114";
+const checks = new Checks();
 
-// Devnet test accounts (OffCKB pre-funded)
-const creatorKey = "0x6109170b275a09ad54877b82f7d9930f88cab5717d484fb4741ae9d1dd078cd6";
-const backerKey = "0x9f315d5a9618a39fdc487c7a67a8581d40b045bd7a42d83648ca80ef3b2cb4a1";
-const triggerKey = "0xd00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc";
+type Devnet = Awaited<ReturnType<typeof setupDevnet>>;
 
-// Load deployment artifacts
-let campaignContract: ContractInfo;
-let campaignLockContract: ContractInfo;
-let pledgeContract: ContractInfo;
-let pledgeLockContract: ContractInfo;
-let receiptContract: ContractInfo;
-
-try {
-  const deploymentPath = path.resolve(__dirname, "../../deployment/deployed-contracts-devnet.json");
-  const deployment = JSON.parse(fs.readFileSync(deploymentPath, "utf-8"));
-  campaignContract = { ...deployment.campaign, hashType: "data2" as const };
-  campaignLockContract = { ...deployment.campaignLock, hashType: "data2" as const };
-  pledgeContract = { ...deployment.pledge, hashType: "data2" as const };
-  pledgeLockContract = { ...deployment.pledgeLock, hashType: "data2" as const };
-  receiptContract = { ...deployment.receipt, hashType: "data2" as const };
-  console.log("Loaded contract info from deployment artifact");
-} catch {
-  console.error("ERROR: Could not load deployment/deployed-contracts-devnet.json");
-  console.error("Deploy contracts first: npx ts-node scripts/deploy-contracts.ts");
-  process.exit(1);
+async function paidTo(client: ccc.Client, txHash: string, lock: ccc.Script): Promise<bigint> {
+  const tx = (await client.getTransaction(txHash))!.transaction!;
+  return tx.outputs.filter((o) => o.lock.eq(lock)).reduce((sum, o) => sum + o.capacity, 0n);
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function createCampaign(d: Devnet, goal: bigint, deadline: bigint, title: string) {
+  const txHash = await d.builder.createCampaign(d.creator, {
+    creatorLockHash: d.creatorLock.hash(),
+    fundingGoal: goal,
+    deadlineBlock: deadline,
+    title,
+  });
+  await waitForTx(d.client, txHash);
+  return { txHash, typeArgs: await campaignTypeArgs(d.client, txHash) };
 }
 
-async function waitForTx(client: ccc.Client, txHash: string, timeout = 60000): Promise<void> {
-  console.log(`  Waiting for tx ${txHash.slice(0, 18)}... to confirm`);
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
-    try {
-      const tx = await client.getTransaction(txHash);
-      if (tx && tx.status === "committed") {
-        console.log("  Confirmed!");
-        return;
-      }
-    } catch {}
-    await sleep(3000);
-  }
-  throw new Error(`Transaction ${txHash} not confirmed after ${timeout}ms`);
+async function pledge(d: Devnet, campaign: { txHash: string; typeArgs: string }, deadline: bigint, amount: bigint) {
+  const txHash = await d.builder.createPledgeWithReceipt(d.backer, {
+    campaignOutPoint: { txHash: campaign.txHash, index: 0 },
+    campaignTypeArgs: campaign.typeArgs,
+    deadlineBlock: deadline,
+    backerLockHash: d.backerLock.hash(),
+    amount,
+    campaignId: campaign.txHash,
+  });
+  await waitForTx(d.client, txHash);
+  return txHash;
 }
 
-async function getCurrentBlock(client: ccc.Client): Promise<bigint> {
-  const tip = await client.getTip();
-  return BigInt(tip);
-}
-
-/**
- * Get the campaign type script hash after creation.
- * This is the hash of the full type script (code_hash + hash_type + TypeID args),
- * NOT just the code hash. Required for pledge lock args.
- */
-async function getCampaignTypeScriptHash(client: ccc.Client, campaignTxHash: string): Promise<string> {
-  const txWithStatus = await client.getTransaction(campaignTxHash);
-  if (!txWithStatus || !txWithStatus.transaction) {
-    throw new Error(`Transaction ${campaignTxHash} not found`);
-  }
-  const campaignOutput = txWithStatus.transaction.outputs[0];
-  if (!campaignOutput.type) {
-    throw new Error("Campaign cell has no type script");
-  }
-  const typeScript = ccc.Script.from(campaignOutput.type);
-  return typeScript.hash();
+async function finalize(
+  d: Devnet,
+  campaign: { txHash: string; typeArgs: string },
+  goal: bigint,
+  deadline: bigint,
+  totalPledged: bigint,
+  expected: CampaignStatus.Success | CampaignStatus.Failed
+) {
+  await waitForBlock(d.client, deadline);
+  const txHash = await d.builder.finalizeCampaign(d.creator, {
+    campaignTypeArgs: campaign.typeArgs,
+    campaignOutPoint: { txHash: campaign.txHash, index: 0 },
+    campaignData: { creatorLockHash: d.creatorLock.hash(), fundingGoal: goal, deadlineBlock: deadline, totalPledged },
+    newStatus: expected,
+  });
+  await waitForTx(d.client, txHash);
+  const cell = await d.builder.findLiveCampaignCell(campaign.typeArgs);
+  checks.check(`campaign finalized as ${CampaignStatus[expected]}`, readCampaignStatus(ccc.hexFrom(cell.outputData)) === expected);
+  return { txHash: cell.outPoint.txHash, index: Number(cell.outPoint.index) };
 }
 
 // ---------------------------------------------------------------------------
 // Scenario 1: Success lifecycle with permissionless release
 // ---------------------------------------------------------------------------
 
-async function testSuccessWithPermissionlessRelease() {
-  console.log("\n=== SCENARIO 1: Success Lifecycle with Permissionless Release ===\n");
+async function testSuccessWithPermissionlessRelease(d: Devnet) {
+  console.log("\n=== SCENARIO 1: Success lifecycle with permissionless release ===");
+  const goal = 100n * CKB;
+  const amount = 150n * CKB;
+  const deadline = BigInt(await d.client.getTip()) + 12n;
+  const campaign = await createCampaign(d, goal, deadline, "v1.1: success");
 
-  const client = createCkbClient("devnet", rpcUrl);
-  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
+  const pledgeTx = await pledge(d, campaign, deadline, amount);
+  const pledgeCell = await outputOf(d.client, pledgeTx, 1);
+  const campaignDep = await finalize(d, campaign, goal, deadline, amount, CampaignStatus.Success);
 
-  const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
-  const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
-  const triggerSigner = new ccc.SignerCkbPrivateKey(client, triggerKey);
-
-  const creatorAddr = await creatorSigner.getRecommendedAddress();
-  const creatorLockScript = (await ccc.Address.fromString(creatorAddr, client)).script;
-  const creatorLockHash = creatorLockScript.hash();
-
-  const backerAddr = await backerSigner.getRecommendedAddress();
-  const backerLockHash = (await ccc.Address.fromString(backerAddr, client)).script.hash();
-
-  // Step 1: Create campaign
-  const currentBlock = await getCurrentBlock(client);
-  const deadline = currentBlock + BigInt(5);
-  const fundingGoal = BigInt(100 * 100000000); // 100 CKB
-
-  console.log(`1. Creating campaign (goal: 100 CKB, deadline: block ${deadline})`);
-  const campaignTxHash = await builder.createCampaign(creatorSigner, {
-    creatorLockHash,
-    fundingGoal,
+  const releaseTx = await d.builder.permissionlessRelease(d.trigger, {
+    pledgeOutPoint: { txHash: pledgeTx, index: 1 },
+    pledgeCapacity: pledgeCell.output.capacity,
+    campaignCellDep: campaignDep,
+    creatorLockScript: lockLike(d.creatorLock),
     deadlineBlock: deadline,
   });
-  console.log(`   Campaign TX: ${campaignTxHash}`);
-  await waitForTx(client, campaignTxHash);
+  await waitForTx(d.client, releaseTx);
 
-  // Step 2: Get campaign type script hash
-  const campaignTypeScriptHash = await getCampaignTypeScriptHash(client, campaignTxHash);
-  console.log(`   Campaign type script hash: ${campaignTypeScriptHash}`);
-
-  // Step 3: Backer pledges with receipt
-  console.log("\n2. Backer pledges 150 CKB with receipt");
-  const pledgeTxHash = await builder.createPledgeWithReceipt(backerSigner, {
-    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-    campaignTypeScriptHash,
-    deadlineBlock: deadline,
-    backerLockHash,
-    amount: BigInt(150 * 100000000), // 150 CKB
-    campaignId: campaignTxHash,
-  });
-  console.log(`   Pledge+Receipt TX: ${pledgeTxHash}`);
-  await waitForTx(client, pledgeTxHash);
-
-  // Step 4: Wait for deadline
-  console.log("\n3. Waiting for deadline to pass...");
-  let block = await getCurrentBlock(client);
-  while (block <= deadline) {
-    await sleep(3000);
-    block = await getCurrentBlock(client);
-    console.log(`   Current block: ${block}, deadline: ${deadline}`);
-  }
-  console.log("   Deadline passed!");
-
-  // Step 5: Finalize as Success
-  console.log("\n4. Creator finalizes campaign as Success");
-  const finalizeTxHash = await builder.finalizeCampaign(creatorSigner, {
-    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-    campaignData: {
-      creatorLockHash,
-      fundingGoal,
-      deadlineBlock: deadline,
-      totalPledged: BigInt(0),
-    },
-    newStatus: CampaignStatus.Success,
-  });
-  console.log(`   Finalize TX: ${finalizeTxHash}`);
-  await waitForTx(client, finalizeTxHash);
-
-  // Step 6: Third party triggers permissionless release
-  console.log("\n5. Third party triggers permissionless release");
-  // Get pledge cell capacity from chain
-  const pledgeTxInfo = await client.getTransaction(pledgeTxHash);
-  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[1].capacity);
-
-  const releaseTxHash = await builder.permissionlessRelease(triggerSigner, {
-    pledgeOutPoint: { txHash: pledgeTxHash, index: 1 },
-    pledgeCapacity,
-    campaignCellDep: { txHash: finalizeTxHash, index: 0 },
-    creatorLockScript: {
-      codeHash: creatorLockScript.codeHash,
-      hashType: creatorLockScript.hashType,
-      args: creatorLockScript.args,
-    },
-    deadlineBlock: deadline,
-  });
-  console.log(`   Release TX: ${releaseTxHash}`);
-  await waitForTx(client, releaseTxHash);
-
-  console.log("\n   SUCCESS: Permissionless release completed by third party!");
+  checks.check("creator received exactly the pledged amount", (await paidTo(d.client, releaseTx, d.creatorLock)) === amount);
+  const overhead = pledgeCell.output.capacity - amount;
+  const backerBack = await paidTo(d.client, releaseTx, d.backerLock);
+  checks.check("backer got the cell overhead back, less at most 1 CKB", backerBack <= overhead && overhead - backerBack <= CKB);
+  checks.check("third-party trigger received nothing", (await paidTo(d.client, releaseTx, d.triggerLock)) === 0n);
 }
 
 // ---------------------------------------------------------------------------
 // Scenario 2: Failure lifecycle with permissionless refund
 // ---------------------------------------------------------------------------
 
-async function testFailureWithPermissionlessRefund() {
-  console.log("\n=== SCENARIO 2: Failure Lifecycle with Permissionless Refund ===\n");
+async function testFailureWithPermissionlessRefund(d: Devnet) {
+  console.log("\n=== SCENARIO 2: Failure lifecycle with permissionless refund ===");
+  const goal = 1000n * CKB;
+  const amount = 100n * CKB;
+  const deadline = BigInt(await d.client.getTip()) + 12n;
+  const campaign = await createCampaign(d, goal, deadline, "v1.1: failure");
 
-  const client = createCkbClient("devnet", rpcUrl);
-  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
+  const pledgeTx = await pledge(d, campaign, deadline, amount);
+  const pledgeCell = await outputOf(d.client, pledgeTx, 1);
+  const campaignDep = await finalize(d, campaign, goal, deadline, amount, CampaignStatus.Failed);
 
-  const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
-  const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
-
-  const creatorAddr = await creatorSigner.getRecommendedAddress();
-  const creatorLockHash = (await ccc.Address.fromString(creatorAddr, client)).script.hash();
-
-  const backerAddr = await backerSigner.getRecommendedAddress();
-  const backerLockScript = (await ccc.Address.fromString(backerAddr, client)).script;
-  const backerLockHash = backerLockScript.hash();
-
-  // Step 1: Create campaign with high goal
-  const currentBlock = await getCurrentBlock(client);
-  const deadline = currentBlock + BigInt(5);
-  const fundingGoal = BigInt(1000 * 100000000); // 1000 CKB
-
-  console.log(`1. Creating campaign (goal: 1000 CKB, deadline: block ${deadline})`);
-  const campaignTxHash = await builder.createCampaign(creatorSigner, {
-    creatorLockHash,
-    fundingGoal,
+  const refundTx = await d.builder.permissionlessRefund(d.backer, {
+    pledgeOutPoint: { txHash: pledgeTx, index: 1 },
+    pledgeCapacity: pledgeCell.output.capacity,
+    campaignCellDep: campaignDep,
+    backerLockScript: lockLike(d.backerLock),
     deadlineBlock: deadline,
   });
-  console.log(`   Campaign TX: ${campaignTxHash}`);
-  await waitForTx(client, campaignTxHash);
+  await waitForTx(d.client, refundTx);
 
-  const campaignTypeScriptHash = await getCampaignTypeScriptHash(client, campaignTxHash);
-
-  // Step 2: Backer pledges insufficient amount with receipt
-  console.log("\n2. Backer pledges 50 CKB with receipt (below 1000 CKB goal)");
-  const pledgeTxHash = await builder.createPledgeWithReceipt(backerSigner, {
-    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-    campaignTypeScriptHash,
-    deadlineBlock: deadline,
-    backerLockHash,
-    amount: BigInt(50 * 100000000),
-    campaignId: campaignTxHash,
-  });
-  console.log(`   Pledge+Receipt TX: ${pledgeTxHash}`);
-  await waitForTx(client, pledgeTxHash);
-
-  // Step 3: Wait for deadline
-  console.log("\n3. Waiting for deadline to pass...");
-  let block = await getCurrentBlock(client);
-  while (block <= deadline) {
-    await sleep(3000);
-    block = await getCurrentBlock(client);
-    console.log(`   Current block: ${block}, deadline: ${deadline}`);
-  }
-  console.log("   Deadline passed!");
-
-  // Step 4: Finalize as Failed
-  console.log("\n4. Creator finalizes campaign as Failed");
-  const finalizeTxHash = await builder.finalizeCampaign(creatorSigner, {
-    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-    campaignData: {
-      creatorLockHash,
-      fundingGoal,
-      deadlineBlock: deadline,
-      totalPledged: BigInt(0),
-    },
-    newStatus: CampaignStatus.Failed,
-  });
-  console.log(`   Finalize TX: ${finalizeTxHash}`);
-  await waitForTx(client, finalizeTxHash);
-
-  // Step 5: Backer triggers permissionless refund (receipt-free since v1.1 hardening)
-  console.log("\n5. Backer triggers permissionless refund");
-  const pledgeTxInfo = await client.getTransaction(pledgeTxHash);
-  const pledgeCapacity = BigInt(pledgeTxInfo!.transaction!.outputs[1].capacity);
-
-  const refundTxHash = await builder.permissionlessRefund(backerSigner, {
-    pledgeOutPoint: { txHash: pledgeTxHash, index: 1 },
-    pledgeCapacity,
-    campaignCellDep: { txHash: finalizeTxHash, index: 0 },
-    backerLockScript: {
-      codeHash: backerLockScript.codeHash,
-      hashType: backerLockScript.hashType,
-      args: backerLockScript.args,
-    },
-    deadlineBlock: deadline,
-  });
-  console.log(`   Refund TX: ${refundTxHash}`);
-  await waitForTx(client, refundTxHash);
-
-  console.log("\n   SUCCESS: Permissionless refund completed!");
+  const refunded = await paidTo(d.client, refundTx, d.backerLock);
+  checks.check(
+    "backer got the whole pledge cell back, less at most 1 CKB",
+    refunded <= pledgeCell.output.capacity && pledgeCell.output.capacity - refunded <= CKB
+  );
+  checks.check("creator received nothing", (await paidTo(d.client, refundTx, d.creatorLock)) === 0n);
 }
 
 // ---------------------------------------------------------------------------
 // Scenario 3: Merge pledges then release
 // ---------------------------------------------------------------------------
 
-async function testMergeThenRelease() {
-  console.log("\n=== SCENARIO 3: Merge Pledges Then Release ===\n");
+async function testMergeThenRelease(d: Devnet) {
+  console.log("\n=== SCENARIO 3: Merge pledges then release ===");
+  const goal = 100n * CKB;
+  const amount = 100n * CKB;
+  // Three pledges and a merge have to land before the deadline
+  const deadline = BigInt(await d.client.getTip()) + 40n;
+  const campaign = await createCampaign(d, goal, deadline, "v1.1: merge");
+  const campaignTypeScriptHash = (await d.builder.findLiveCampaignCell(campaign.typeArgs)).cellOutput.type!.hash();
 
-  const client = createCkbClient("devnet", rpcUrl);
-  const builder = new TransactionBuilder(client, campaignContract, campaignLockContract, pledgeContract, pledgeLockContract, receiptContract);
+  const pledgeTxs: string[] = [];
+  for (let i = 0; i < 3; i++) pledgeTxs.push(await pledge(d, campaign, deadline, amount));
 
-  const creatorSigner = new ccc.SignerCkbPrivateKey(client, creatorKey);
-  const backerSigner = new ccc.SignerCkbPrivateKey(client, backerKey);
-  const triggerSigner = new ccc.SignerCkbPrivateKey(client, triggerKey);
+  const pledgeCells = await Promise.all(pledgeTxs.map((tx) => outputOf(d.client, tx, 1)));
+  const pledgeCapacities = pledgeCells.map((c) => c.output.capacity);
+  const totalCapacity = pledgeCapacities.reduce((sum, c) => sum + c, 0n);
+  const totalAmount = amount * 3n;
 
-  const creatorAddr = await creatorSigner.getRecommendedAddress();
-  const creatorLockScript = (await ccc.Address.fromString(creatorAddr, client)).script;
-  const creatorLockHash = creatorLockScript.hash();
-
-  const backerAddr = await backerSigner.getRecommendedAddress();
-  const backerLockHash = (await ccc.Address.fromString(backerAddr, client)).script.hash();
-
-  // Step 1: Create campaign
-  const currentBlock = await getCurrentBlock(client);
-  const deadline = currentBlock + BigInt(15); // longer deadline for merge
-  const fundingGoal = BigInt(100 * 100000000);
-
-  console.log(`1. Creating campaign (goal: 100 CKB, deadline: block ${deadline})`);
-  const campaignTxHash = await builder.createCampaign(creatorSigner, {
-    creatorLockHash,
-    fundingGoal,
-    deadlineBlock: deadline,
-  });
-  console.log(`   Campaign TX: ${campaignTxHash}`);
-  await waitForTx(client, campaignTxHash);
-
-  const campaignTypeScriptHash = await getCampaignTypeScriptHash(client, campaignTxHash);
-
-  // Step 2: Backer makes 3 separate pledges
-  const pledgeAmount = BigInt(50 * 100000000); // 50 CKB each
-  const pledgeTxHashes: string[] = [];
-
-  for (let i = 1; i <= 3; i++) {
-    console.log(`\n2.${i}. Backer pledges 50 CKB (pledge #${i})`);
-    const txHash = await builder.createPledgeWithReceipt(backerSigner, {
-      campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-      campaignTypeScriptHash,
-      deadlineBlock: deadline,
-      backerLockHash,
-      amount: pledgeAmount,
-      campaignId: campaignTxHash,
-    });
-    console.log(`   Pledge+Receipt #${i} TX: ${txHash}`);
-    await waitForTx(client, txHash);
-    pledgeTxHashes.push(txHash);
-  }
-
-  // Step 3: Merge the 3 pledge cells
-  console.log("\n3. Merging 3 pledge cells into 1");
-
-  // Get capacities from chain
-  const pledgeCapacities: bigint[] = [];
-  const pledgeOutPoints: Array<{ txHash: string; index: number }> = [];
-  for (const txHash of pledgeTxHashes) {
-    const txInfo = await client.getTransaction(txHash);
-    pledgeCapacities.push(BigInt(txInfo!.transaction!.outputs[1].capacity));
-    pledgeOutPoints.push({ txHash, index: 1 });
-  }
-
-  const pledgeLockArgs = serializePledgeLockArgs(campaignTypeScriptHash, deadline, backerLockHash);
-  const totalAmount = pledgeAmount * BigInt(3);
-
-  const mergeTxHash = await builder.mergeContributions(backerSigner, {
-    pledgeOutPoints,
+  const mergeTx = await d.builder.mergeContributions(d.backer, {
+    pledgeOutPoints: pledgeTxs.map((txHash) => ({ txHash, index: 1 })),
     pledgeCapacities,
-    campaignId: campaignTxHash,
-    backerLockHash,
-    pledgeLockArgs,
+    campaignId: campaign.txHash,
+    backerLockHash: d.backerLock.hash(),
+    pledgeLockArgs: serializePledgeLockArgs(campaignTypeScriptHash, deadline, d.backerLock.hash()),
     totalAmount,
   });
-  console.log(`   Merge TX: ${mergeTxHash}`);
-  await waitForTx(client, mergeTxHash);
+  await waitForTx(d.client, mergeTx);
 
-  // Step 4: Wait for deadline
-  console.log("\n4. Waiting for deadline to pass...");
-  let block = await getCurrentBlock(client);
-  while (block <= deadline) {
-    await sleep(3000);
-    block = await getCurrentBlock(client);
-    console.log(`   Current block: ${block}, deadline: ${deadline}`);
-  }
-  console.log("   Deadline passed!");
+  const merged = await outputOf(d.client, mergeTx, 0);
+  checks.check("merged cell holds the sum of the input capacities", merged.output.capacity === totalCapacity);
+  checks.check("merged cell records the sum of the amounts", readPledgeAmount(merged.data) === totalAmount);
+  checks.check(
+    "merged cell keeps the inputs' pledge type script",
+    !!merged.output.type && merged.output.type.eq(pledgeCells[0].output.type!)
+  );
+  checks.check("merged cell keeps the inputs' pledge lock", merged.output.lock.eq(pledgeCells[0].output.lock));
 
-  // Step 5: Finalize as Success
-  console.log("\n5. Creator finalizes campaign as Success");
-  const finalizeTxHash = await builder.finalizeCampaign(creatorSigner, {
-    campaignOutPoint: { txHash: campaignTxHash, index: 0 },
-    campaignData: {
-      creatorLockHash,
-      fundingGoal,
-      deadlineBlock: deadline,
-      totalPledged: BigInt(0),
-    },
-    newStatus: CampaignStatus.Success,
-  });
-  console.log(`   Finalize TX: ${finalizeTxHash}`);
-  await waitForTx(client, finalizeTxHash);
+  const campaignDep = await finalize(d, campaign, goal, deadline, totalAmount, CampaignStatus.Success);
 
-  // Step 6: Release from merged cell
-  console.log("\n6. Third party triggers permissionless release from merged cell");
-  const mergedTxInfo = await client.getTransaction(mergeTxHash);
-  const mergedCapacity = BigInt(mergedTxInfo!.transaction!.outputs[0].capacity);
-
-  const releaseTxHash = await builder.permissionlessRelease(triggerSigner, {
-    pledgeOutPoint: { txHash: mergeTxHash, index: 0 },
-    pledgeCapacity: mergedCapacity,
-    campaignCellDep: { txHash: finalizeTxHash, index: 0 },
-    creatorLockScript: {
-      codeHash: creatorLockScript.codeHash,
-      hashType: creatorLockScript.hashType,
-      args: creatorLockScript.args,
-    },
+  const releaseTx = await d.builder.permissionlessRelease(d.trigger, {
+    pledgeOutPoint: { txHash: mergeTx, index: 0 },
+    pledgeCapacity: merged.output.capacity,
+    campaignCellDep: campaignDep,
+    creatorLockScript: lockLike(d.creatorLock),
     deadlineBlock: deadline,
   });
-  console.log(`   Release TX: ${releaseTxHash}`);
-  await waitForTx(client, releaseTxHash);
+  await waitForTx(d.client, releaseTx);
 
-  console.log("\n   SUCCESS: Merge then permissionless release completed!");
-}
+  checks.check("creator received exactly the merged amount", (await paidTo(d.client, releaseTx, d.creatorLock)) === totalAmount);
+  const overhead = merged.output.capacity - totalAmount;
+  const backerBack = await paidTo(d.client, releaseTx, d.backerLock);
+  checks.check("backer got all three overheads back, less at most 1 CKB", backerBack <= overhead && overhead - backerBack <= CKB);
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-async function main() {
-  console.log("=== CKB Kickstarter v1.1 Lifecycle Integration Tests ===");
-  console.log(`RPC: ${rpcUrl}`);
-  console.log(`Campaign contract: ${campaignContract.codeHash}`);
-  console.log(`Pledge contract: ${pledgeContract.codeHash}`);
-  console.log(`Pledge-Lock contract: ${pledgeLockContract.codeHash}`);
-  console.log(`Receipt contract: ${receiptContract.codeHash}`);
-
-  try {
-    await testSuccessWithPermissionlessRelease();
-    await testFailureWithPermissionlessRefund();
-    await testMergeThenRelease();
-    console.log("\n\n=== ALL v1.1 TESTS PASSED ===");
-  } catch (error) {
-    console.error("\n\nTEST FAILED:", error);
-    process.exit(1);
+  for (const [i, pledgeTx] of pledgeTxs.entries()) {
+    const receipt = await outputOf(d.client, pledgeTx, 2);
+    const reclaimTx = await d.builder.reclaimReceipt(d.backer, {
+      receiptOutPoint: { txHash: pledgeTx, index: 2 },
+      campaignCellDep: campaignDep,
+    });
+    await waitForTx(d.client, reclaimTx);
+    const back = await paidTo(d.client, reclaimTx, d.backerLock);
+    checks.check(
+      `receipt #${i + 1} reclaimed after the merged release`,
+      back < receipt.output.capacity && receipt.output.capacity - back < CKB / 100n
+    );
   }
 }
 
-main().catch(console.error);
+async function main() {
+  console.log("=== CKB Kickstarter v1.1 lifecycle integration tests ===");
+  const d = await setupDevnet();
+  await testSuccessWithPermissionlessRelease(d);
+  await testFailureWithPermissionlessRefund(d);
+  await testMergeThenRelease(d);
+  checks.finish("v1.1 lifecycle");
+}
+
+main().catch((err) => {
+  console.error("\nFATAL:", err);
+  process.exit(1);
+});
