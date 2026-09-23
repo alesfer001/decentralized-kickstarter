@@ -131,6 +131,24 @@ export const CAMPAIGN_DATA_SIZE = 65;
 export const PLEDGE_DATA_SIZE = 72;
 
 /**
+ * Average block interval used to convert between dates and block numbers. CKB targets ~8s;
+ * testnet measured 8.0s over 300k blocks (2026-09-23). The contracts assume the same rate.
+ */
+export const SECONDS_PER_BLOCK = 8;
+
+/**
+ * Shortest campaign the create form allows, in hours.
+ */
+export const MIN_DEADLINE_HOURS = 1;
+
+/**
+ * Blocks past the deadline before a finalized campaign cell may be destroyed (~180 days).
+ * Must match GRACE_PERIOD_BLOCKS in the campaign contract: until then backers may still need
+ * the campaign cell as a cell dep to settle their pledges and reclaim their receipts.
+ */
+export const GRACE_PERIOD_BLOCKS = 1_944_000n;
+
+/**
  * Receipt data size in bytes:
  * pledge_amount u64 + backer_lock_hash 32 + campaign_type_script_hash 32 + deadline_block u64
  */

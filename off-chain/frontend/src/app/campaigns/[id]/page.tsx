@@ -15,6 +15,7 @@ import {
   getFundingProgress,
   blocksToTimeEstimate,
   blockToRelativeTime,
+  blockNumberToDate,
   getPledgeDistributionLabel,
   getPledgeDistributionColor,
   getExplorerTxUrl,
@@ -22,7 +23,7 @@ import {
   calculateCostBreakdown,
   formatCost,
 } from "@/lib/utils";
-import { CONTRACTS, MIN_PLEDGE_CKB, PLEDGE_CELL_OVERHEAD, RECEIPT_CELL_CAPACITY, EXPLORER_URL } from "@/lib/constants";
+import { CONTRACTS, MIN_PLEDGE_CKB, PLEDGE_CELL_OVERHEAD, RECEIPT_CELL_CAPACITY, EXPLORER_URL, GRACE_PERIOD_BLOCKS } from "@/lib/constants";
 import {
   u64ToHexLE,
   serializeMetadataHex,
@@ -816,26 +817,21 @@ export default function CampaignDetailPage() {
       const client = signer.client;
       const lockScript = (await ccc.Address.fromString(address, client)).script;
 
-      const [txHash, indexStr] = campaign.campaignId.split("_");
+      const { cell: campaignCell } = await resolveLiveCampaignCell(client, campaign.campaignId);
 
-      // Calculate campaign cell capacity (same formula as creation)
-      const campaignHexLen = campaign.title || campaign.description
-        ? 65 + 2 + new TextEncoder().encode(campaign.title || "").length + 2 + new TextEncoder().encode(campaign.description || "").length
-        : 65;
-      const campaignCapacity = BigInt(Math.ceil((8 + campaignHexLen + 65 + 65) * 1.2)) * BigInt(100000000);
-
+      // The campaign-lock needs since >= deadline and the campaign type script needs
+      // since >= deadline + grace period, so one since satisfies both. The whole capacity
+      // goes back to the creator, less the fee, which the type script allows up to 1 CKB.
       const tx = ccc.Transaction.from({
         inputs: [
           {
-            previousOutput: {
-              txHash: txHash,
-              index: parseInt(indexStr),
-            },
+            previousOutput: campaignCell.outPoint,
+            since: BigInt(campaign.deadlineBlock) + GRACE_PERIOD_BLOCKS,
           },
         ],
         outputs: [
           {
-            capacity: campaignCapacity,
+            capacity: campaignCell.cellOutput.capacity,
             lock: lockScript,
             // No type script — plain CKB cell, capacity reclaimed
           },
@@ -849,10 +845,19 @@ export default function CampaignDetailPage() {
             },
             depType: "code",
           },
+          {
+            outPoint: {
+              txHash: CONTRACTS.campaignLock.txHash,
+              index: CONTRACTS.campaignLock.index,
+            },
+            depType: "code",
+          },
         ],
       });
 
-      await tx.completeFeeBy(signer, 1000);
+      tx.witnesses.push("0x");
+
+      await tx.completeFeeChangeToOutput(signer, 0, 1000);
       const hash = await signer.sendTransaction(tx);
       setActionTxHash(hash);
       toast("success", "Campaign destroyed! Redirecting...");
@@ -947,6 +952,14 @@ export default function CampaignDetailPage() {
     : [];
   const ownDeposit = RECEIPT_CELL_CAPACITY * BigInt(ownReceipts.length);
   const canReclaim = ownReceipts.length > 0 && campaign.status !== CampaignStatus.Active;
+
+  /**
+   * The campaign type script only lets a finalized campaign cell be destroyed once the grace
+   * period past the deadline is over, so backers can still settle against it until then.
+   */
+  const graceEndBlock = BigInt(campaign.deadlineBlock) + GRACE_PERIOD_BLOCKS;
+  const creatorCanDestroyLater = isCreator && campaign.status !== CampaignStatus.Active && pledges.length === 0;
+  const canDestroy = creatorCanDestroyLater && currentBlock !== null && currentBlock >= graceEndBlock;
 
   /** Derive distribution counts from receipts and live pledges */
   const receiptCount = receipts.length;
@@ -1353,7 +1366,16 @@ export default function CampaignDetailPage() {
                 </div>
               )}
 
-              {isCreator && campaign.status !== CampaignStatus.Active && pledges.length === 0 && (
+              {creatorCanDestroyLater && !canDestroy && currentBlock !== null && (
+                <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
+                  All pledges have been handled. You can destroy this campaign cell and reclaim its CKB
+                  after block #{graceEndBlock.toLocaleString()} (around{" "}
+                  {blockNumberToDate(graceEndBlock, currentBlock).toLocaleDateString(undefined, { dateStyle: "medium" })}).
+                  The wait gives every backer time to settle against it and reclaim their receipt.
+                </p>
+              )}
+
+              {canDestroy && (
                 <div className="mt-4">
                   <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                     All pledges have been handled. You can destroy this campaign cell to reclaim its CKB capacity.
