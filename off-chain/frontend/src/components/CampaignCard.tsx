@@ -10,6 +10,7 @@ import {
   getFundingProgress,
   blocksToTimeEstimate,
 } from "@/lib/utils";
+import { CellMeter, CellMeterTone } from "./CellMeter";
 
 interface CampaignCardProps {
   campaign: Campaign;
@@ -19,6 +20,13 @@ interface CampaignCardProps {
 /** The campaign's stable URL id: its creation out point, which never moves. */
 function canonicalCampaignId(campaign: Campaign): string {
   return campaign.originalTxHash ? `${campaign.originalTxHash}_0` : campaign.campaignId;
+}
+
+/** Meter colour per effective status: amber while open, the outcome's colour once decided */
+function meterTone(effectiveStatus: string): CellMeterTone {
+  if (effectiveStatus === "success") return "ok";
+  if (effectiveStatus === "failed") return "bad";
+  return "fund";
 }
 
 export function CampaignCard({ campaign, currentBlock }: CampaignCardProps) {
@@ -43,92 +51,47 @@ export function CampaignCard({ campaign, currentBlock }: CampaignCardProps) {
     // Link by the creation out point, not the current one: since v1.2 the campaign cell
     // moves with every pledge, so a card rendered a moment ago would otherwise link to a
     // dead id. The indexer resolves a creation-tx id to whatever the live cell is.
-    <Link href={`/campaigns/${encodeURIComponent(canonicalCampaignId(campaign))}`}>
-      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 sm:p-6 hover:border-zinc-400 dark:hover:border-zinc-600 transition-colors">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex-1 min-w-0">
-            {campaign.title ? (
-              <h3 className="font-semibold text-lg leading-tight truncate">
-                {campaign.title}
-              </h3>
-            ) : (
-              <>
-                <p className="text-sm text-zinc-500 dark:text-zinc-500 mb-1">
-                  Campaign
-                </p>
-                <p className="font-mono text-sm">
-                  {formatHash(campaign.campaignId)}
-                </p>
-              </>
-            )}
-          </div>
-          <span
-            className={`px-2 py-1 text-xs font-medium rounded whitespace-nowrap ml-2 ${getEffectiveStatusColor(effectiveStatus)}`}
-          >
-            {getEffectiveStatusLabel(effectiveStatus)}
-          </span>
-        </div>
-
-        {campaign.description && (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 line-clamp-2">
-            {campaign.description}
-          </p>
+    <Link
+      href={`/campaigns/${encodeURIComponent(canonicalCampaignId(campaign))}`}
+      className="bg-surface-2 border border-line rounded-[14px] p-[18px] flex flex-col gap-3 hover:border-ink-3 transition-colors"
+    >
+      <div className="flex items-start justify-between gap-2">
+        {campaign.title ? (
+          <h3 className="font-bold text-[15px] leading-snug min-w-0 break-words">{campaign.title}</h3>
+        ) : (
+          <h3 className="font-mono text-sm min-w-0">{formatHash(campaign.campaignId)}</h3>
         )}
-
-        <div className="space-y-3">
-          <div>
-            <div className="flex justify-between text-sm mb-1">
-              <span className="text-zinc-600 dark:text-zinc-400">Progress</span>
-              <span className="font-medium">{progress.toFixed(1)}%</span>
-            </div>
-            <div className="h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-blue-600 rounded-full transition-all"
-                style={{ width: `${Math.min(100, progress)}%` }}
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-between text-sm">
-            <span className="text-zinc-600 dark:text-zinc-400">Pledged</span>
-            <span className="font-medium">
-              {shannonsToCKB(campaign.totalPledged)} CKB
-            </span>
-          </div>
-
-          <div className="flex justify-between text-sm">
-            <span className="text-zinc-600 dark:text-zinc-400">Goal</span>
-            <span className="font-medium">
-              {shannonsToCKB(campaign.fundingGoal)} CKB
-            </span>
-          </div>
-
-          <div className="flex justify-between text-sm">
-            <span className="text-zinc-600 dark:text-zinc-400">Deadline</span>
-            <span className="font-medium">
-              Block #{campaign.deadlineBlock}
-              {blocksRemaining !== null && (
-                <span className="text-zinc-500 ml-1 text-xs">
-                  ({blocksRemaining > 0n
-                    ? blocksToTimeEstimate(blocksRemaining) + " left"
-                    : "Expired"})
-                </span>
-              )}
-            </span>
-          </div>
-
-          <div className="flex justify-between text-sm">
-            <span className="text-zinc-600 dark:text-zinc-400">Backers</span>
-            <span className="font-medium">{campaign.backerCount ?? 0}</span>
-          </div>
-
-          <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800">
-            <p className="text-xs text-zinc-500">
-              Creator: {formatHash(campaign.creator)}
-            </p>
-          </div>
-        </div>
+        <span
+          className={`font-mono text-[10px] tracking-wider uppercase px-2 py-1 rounded whitespace-nowrap ${getEffectiveStatusColor(effectiveStatus)}`}
+        >
+          {getEffectiveStatusLabel(effectiveStatus)}
+        </span>
       </div>
+
+      {campaign.description && (
+        <p className="text-[13px] text-ink-2 line-clamp-2">{campaign.description}</p>
+      )}
+
+      <CellMeter progress={progress} tone={meterTone(effectiveStatus)} />
+
+      <dl className="grid grid-cols-2 gap-x-2.5 gap-y-1.5 text-xs">
+        <dt className="text-ink-3">Pledged</dt>
+        <dd className="font-mono text-right">{shannonsToCKB(campaign.totalPledged)} CKB</dd>
+        <dt className="text-ink-3">Goal</dt>
+        <dd className="font-mono text-right">{shannonsToCKB(campaign.fundingGoal)} CKB</dd>
+        <dt className="text-ink-3">Deadline</dt>
+        <dd className="font-mono text-right">
+          {blocksRemaining !== null && blocksRemaining > 0n
+            ? `${blocksToTimeEstimate(blocksRemaining)} left`
+            : `#${Number(campaign.deadlineBlock).toLocaleString()}`}
+        </dd>
+        <dt className="text-ink-3">Backers</dt>
+        <dd className="font-mono text-right">{campaign.backerCount ?? 0}</dd>
+      </dl>
+
+      <p className="mt-auto font-mono text-[11px] text-ink-3 border-t border-line-2 pt-2.5">
+        creator {formatHash(campaign.creator)}
+      </p>
     </Link>
   );
 }

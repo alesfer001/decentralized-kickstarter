@@ -75,7 +75,7 @@ async function resolveLiveCampaignCell(client: any, campaignId: string) {
   const knownTx = await client.getTransaction(knownTxHash);
   const knownOutput = knownTx?.transaction?.outputs?.[parseInt(knownIndex)];
   if (!knownOutput?.type) {
-    throw new Error("Campaign cell not found — it may have been destroyed");
+    throw new Error("Campaign cell not found. It may have been destroyed.");
   }
   const typeScript = ccc.Script.from(knownOutput.type);
 
@@ -868,7 +868,7 @@ export default function CampaignDetailPage() {
         if (!found) return true;
         return false;
       });
-      router.push("/");
+      router.push("/app");
     } catch (err) {
       console.error("Failed to destroy campaign:", err);
       const msg = err instanceof Error ? err.message : "Failed to destroy campaign";
@@ -919,7 +919,7 @@ export default function CampaignDetailPage() {
           </p>
         </div>
         <Link
-          href="/"
+          href="/app"
           className="inline-block mt-4 text-blue-600 hover:underline"
         >
           Back to campaigns
@@ -979,8 +979,8 @@ export default function CampaignDetailPage() {
   return (
     <div className="max-w-4xl mx-auto">
       <Link
-        href="/"
-        className="inline-block mb-6 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+        href="/app"
+        className="inline-block mb-6 text-ink-2 hover:text-zinc-900 dark:hover:text-zinc-100"
       >
         &larr; Back to campaigns
       </Link>
@@ -988,13 +988,13 @@ export default function CampaignDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Pledge Form Sidebar — appears first on mobile */}
         <div className="lg:col-span-1 order-first lg:order-last">
-          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6 sticky top-8">
+          <div className="border border-line rounded-lg p-6 sticky top-8">
             <h2 className="text-lg font-semibold mb-4">Make a Pledge</h2>
 
             {!canPledge ? (
               <div className="space-y-4">
-                <div className="bg-zinc-100 dark:bg-zinc-900 rounded-lg p-4 text-center">
-                  <p className="text-zinc-600 dark:text-zinc-400">
+                <div className="bg-surface-3 rounded-lg p-4 text-center">
+                  <p className="text-ink-2">
                     {isExpired
                       ? "This campaign has expired"
                       : "This campaign is no longer accepting pledges"}
@@ -1002,9 +1002,9 @@ export default function CampaignDetailPage() {
                 </div>
 
                 {ownReceipts.length > 0 && (
-                  <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+                  <div className="rounded-lg border border-line p-4">
                     <h3 className="font-medium mb-1">Your receipt deposit</h3>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+                    <p className="text-sm text-ink-2 mb-3">
                       {ownReceipts.length === 1
                         ? `Your pledge left a ${formatCost(ownDeposit)} CKB receipt deposit in your wallet.`
                         : `Your ${ownReceipts.length} pledges left ${formatCost(ownDeposit)} CKB in receipt deposits in your wallet.`}{" "}
@@ -1026,7 +1026,7 @@ export default function CampaignDetailPage() {
               </div>
             ) : !signer ? (
               <div className="text-center">
-                <p className="text-zinc-600 dark:text-zinc-400 mb-4">
+                <p className="text-ink-2 mb-4">
                   Connect your wallet to make a pledge
                 </p>
                 <button
@@ -1060,19 +1060,19 @@ export default function CampaignDetailPage() {
                     placeholder={String(MIN_PLEDGE_CKB)}
                     min={MIN_PLEDGE_CKB}
                     step="1"
-                    className="w-full px-4 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2 border border-line rounded-lg bg-surface-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     disabled={pledging}
                   />
-                  <p className="mt-1 text-xs text-zinc-500">Minimum {MIN_PLEDGE_CKB} CKB</p>
+                  <p className="mt-1 text-xs text-ink-3">Minimum {MIN_PLEDGE_CKB} CKB</p>
                 </div>
 
                 {pledgeAmount && (
-                  <div className="mt-3 p-3 bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
-                    <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">Cost Breakdown</div>
+                  <div className="mt-3 p-3 bg-surface-2 rounded-lg border border-line">
+                    <div className="text-xs font-semibold text-ink-2 mb-2">Cost Breakdown</div>
                     {(() => {
                       const breakdown = calculateCostBreakdown(pledgeAmount);
                       return (
-                        <div className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                        <div className="space-y-1 text-xs text-ink-2">
                           <div className="flex justify-between gap-2">
                             <span>Pledge</span>
                             <span className="font-medium whitespace-nowrap">{formatCost(breakdown.pledgeAmount)} CKB</span>
@@ -1089,7 +1089,7 @@ export default function CampaignDetailPage() {
                             <span>Network fee</span>
                             <span className="font-medium whitespace-nowrap">&lt; 0.01 CKB</span>
                           </div>
-                          <div className="border-t border-zinc-300 dark:border-zinc-700 my-2 pt-2 flex justify-between font-semibold text-zinc-800 dark:text-zinc-200">
+                          <div className="border-t border-line my-2 pt-2 flex justify-between font-semibold text-ink">
                             <span>Leaves your wallet</span>
                             <span className="whitespace-nowrap">{formatCost(breakdown.totalFromWallet)} CKB</span>
                           </div>
@@ -1137,14 +1137,14 @@ export default function CampaignDetailPage() {
 
         {/* Campaign Details */}
         <div className="lg:col-span-2 space-y-6">
-          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
+          <div className="border border-line rounded-lg p-6">
             <div className="flex items-start justify-between mb-4">
               <div className="flex-1 min-w-0">
                 {campaign.title ? (
                   <h2 className="text-2xl font-bold">{campaign.title}</h2>
                 ) : (
                   <>
-                    <p className="text-sm text-zinc-500 mb-1">Campaign ID</p>
+                    <p className="text-sm text-ink-3 mb-1">Campaign ID</p>
                     <p className="font-mono text-sm break-all">{campaign.campaignId}</p>
                   </>
                 )}
@@ -1161,19 +1161,19 @@ export default function CampaignDetailPage() {
               <div className="mb-4">
                 <button
                   onClick={() => setShowCampaignId(!showCampaignId)}
-                  className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 flex items-center gap-1"
+                  className="text-xs text-ink-3 hover:text-zinc-700 dark:hover:text-zinc-300 flex items-center gap-1"
                 >
                   <span>{showCampaignId ? "Hide" : "Show"} Campaign ID</span>
                   <span>{showCampaignId ? "\u25B2" : "\u25BC"}</span>
                 </button>
                 {showCampaignId && (
                   <div className="mt-1 flex items-center gap-2">
-                    <p className="font-mono text-xs text-zinc-500 break-all flex-1">
+                    <p className="font-mono text-xs text-ink-3 break-all flex-1">
                       {campaign.campaignId}
                     </p>
                     <button
                       onClick={copyCampaignId}
-                      className="text-xs px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 whitespace-nowrap"
+                      className="text-xs px-2 py-1 rounded border border-line hover:bg-surface-3 whitespace-nowrap"
                     >
                       {idCopied ? "Copied!" : "Copy"}
                     </button>
@@ -1183,7 +1183,7 @@ export default function CampaignDetailPage() {
             )}
 
             {campaign.description && (
-              <p className="text-zinc-600 dark:text-zinc-400 mb-4">
+              <p className="text-ink-2 mb-4">
                 {campaign.description}
               </p>
             )}
@@ -1191,12 +1191,12 @@ export default function CampaignDetailPage() {
             <div className="space-y-4">
               <div>
                 <div className="flex justify-between text-sm mb-2">
-                  <span className="text-zinc-600 dark:text-zinc-400">
+                  <span className="text-ink-2">
                     Funding Progress
                   </span>
                   <span className="font-medium">{progress.toFixed(1)}%</span>
                 </div>
-                <div className="h-3 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                <div className="h-3 bg-line-2 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-blue-600 rounded-full transition-all"
                     style={{ width: `${Math.min(100, progress)}%` }}
@@ -1205,14 +1205,14 @@ export default function CampaignDetailPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-zinc-50 dark:bg-zinc-900 rounded-lg">
-                  <p className="text-sm text-zinc-500 mb-1">Pledged</p>
+                <div className="p-4 bg-surface-2 rounded-lg">
+                  <p className="text-sm text-ink-3 mb-1">Pledged</p>
                   <p className="text-2xl font-bold">
                     {shannonsToCKB(campaign.totalPledged)} CKB
                   </p>
                 </div>
-                <div className="p-4 bg-zinc-50 dark:bg-zinc-900 rounded-lg">
-                  <p className="text-sm text-zinc-500 mb-1">Goal</p>
+                <div className="p-4 bg-surface-2 rounded-lg">
+                  <p className="text-sm text-ink-3 mb-1">Goal</p>
                   <p className="text-2xl font-bold">
                     {shannonsToCKB(campaign.fundingGoal)} CKB
                   </p>
@@ -1221,11 +1221,11 @@ export default function CampaignDetailPage() {
 
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <p className="text-zinc-500">Deadline Block</p>
+                  <p className="text-ink-3">Deadline Block</p>
                   <p className="font-medium">
                     #{campaign.deadlineBlock}
                     {blocksRemaining !== null && (
-                      <span className="text-zinc-500 ml-1 text-xs">
+                      <span className="text-ink-3 ml-1 text-xs">
                         ({blocksRemaining > 0n
                           ? blocksToTimeEstimate(blocksRemaining) + " left"
                           : "Expired"})
@@ -1234,7 +1234,7 @@ export default function CampaignDetailPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-zinc-500">Current Block</p>
+                  <p className="text-ink-3">Current Block</p>
                   <p className="font-medium">
                     #{currentBlock?.toString() || "..."}
                     {isExpired && (
@@ -1246,23 +1246,23 @@ export default function CampaignDetailPage() {
 
               {campaign.createdAt && currentBlock !== null && (
                 <div className="text-sm">
-                  <p className="text-zinc-500">Created at block</p>
+                  <p className="text-ink-3">Created at block</p>
                   <p className="font-medium">
                     #{campaign.createdAt}
-                    <span className="text-zinc-500 ml-1 text-xs">
+                    <span className="text-ink-3 ml-1 text-xs">
                       ({blockToRelativeTime(campaign.createdAt, currentBlock)})
                     </span>
                   </p>
                 </div>
               )}
 
-              <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">
-                <p className="text-sm text-zinc-500 mb-1">Creator</p>
+              <div className="pt-4 border-t border-line">
+                <p className="text-sm text-ink-3 mb-1">Creator</p>
                 <p className="font-mono text-sm break-all">{campaign.creator}</p>
               </div>
 
               <div>
-                <p className="text-sm text-zinc-500 mb-1">Transaction</p>
+                <p className="text-sm text-ink-3 mb-1">Transaction</p>
                 <p className="font-mono text-sm break-all">{campaign.txHash}</p>
               </div>
             </div>
@@ -1270,7 +1270,7 @@ export default function CampaignDetailPage() {
 
           {/* Transaction Progress Indicator */}
           {txProgress && (
-            <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4">
+            <div className="border border-line rounded-lg p-4">
               <div className="flex items-center gap-3">
                 {["submitted", "pending", "confirmed"].map((step, i) => (
                   <div key={step} className="flex items-center gap-2">
@@ -1283,7 +1283,7 @@ export default function CampaignDetailPage() {
                           : "bg-zinc-300 dark:bg-zinc-700"
                       }`}
                     />
-                    <span className="text-xs text-zinc-600 dark:text-zinc-400 capitalize">
+                    <span className="text-xs text-ink-2 capitalize">
                       {step}
                     </span>
                     {i < 2 && (
@@ -1295,15 +1295,15 @@ export default function CampaignDetailPage() {
             </div>
           )}
 
-          {/* Distribution Status (v1.1) */}
+          {/* Distribution Status */}
           {campaign.status !== CampaignStatus.Active && (
-            <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
+            <div className="border border-line rounded-lg p-6">
               <h2 className="text-lg font-semibold mb-2">Distribution Status</h2>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              <p className="text-sm text-ink-2">
                 {distributionSummary}
               </p>
-              <p className="text-xs text-zinc-500 mt-1">
-                v1.1: Fund distribution is automatic and permissionless. Anyone can trigger release/refund transactions.
+              <p className="text-xs text-ink-3 mt-1">
+                The finalization bot releases or refunds every pledge automatically. Anyone can also trigger it.
               </p>
 
               {signer && pledges.length > 0 && (
@@ -1334,7 +1334,7 @@ export default function CampaignDetailPage() {
 
           {/* Actions Section */}
           {signer && (canFinalize || (isCreator && campaign.status !== CampaignStatus.Active && pledges.length === 0)) && (
-            <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
+            <div className="border border-line rounded-lg p-6">
               <h2 className="text-lg font-semibold mb-4">Actions</h2>
 
               {actionTxHash && (
@@ -1350,11 +1350,11 @@ export default function CampaignDetailPage() {
 
               {canFinalize && (
                 <div className="mb-4">
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
+                  <p className="text-sm text-ink-2 mb-2">
                     This campaign has expired and needs to be finalized on-chain.
                     {BigInt(campaign.totalPledged) >= BigInt(campaign.fundingGoal)
-                      ? " The funding goal was met — it will be marked as Successful. Funds will be automatically released to the creator."
-                      : " The funding goal was not met — it will be marked as Unsuccessful. Funds will be automatically refunded to backers."}
+                      ? " The funding goal was met, so it will be marked Funded and the pledges released to the creator."
+                      : " The funding goal was not met, so it will be marked Unsuccessful and every pledge refunded to its backer."}
                   </p>
                   <button
                     onClick={handleFinalize}
@@ -1367,7 +1367,7 @@ export default function CampaignDetailPage() {
               )}
 
               {creatorCanDestroyLater && !canDestroy && currentBlock !== null && (
-                <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
+                <p className="mt-4 text-sm text-ink-2">
                   All pledges have been handled. You can destroy this campaign cell and reclaim its CKB
                   after block #{graceEndBlock.toLocaleString()} (around{" "}
                   {blockNumberToDate(graceEndBlock, currentBlock).toLocaleDateString(undefined, { dateStyle: "medium" })}).
@@ -1377,7 +1377,7 @@ export default function CampaignDetailPage() {
 
               {canDestroy && (
                 <div className="mt-4">
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
+                  <p className="text-sm text-ink-2 mb-2">
                     All pledges have been handled. You can destroy this campaign cell to reclaim its CKB capacity.
                   </p>
                   <button
@@ -1393,12 +1393,12 @@ export default function CampaignDetailPage() {
           )}
 
           {/* Pledges List */}
-          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
+          <div className="border border-line rounded-lg p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">
-                Pledges ({pledges.length}){" "}
+                {campaign.status === CampaignStatus.Active ? "Pledges" : "Unsettled pledges"} ({pledges.length}){" "}
                 {backerCount > 0 && (
-                  <span className="text-sm font-normal text-zinc-500">
+                  <span className="text-sm font-normal text-ink-3">
                     from {backerCount} backer{backerCount !== 1 ? "s" : ""}
                   </span>
                 )}
@@ -1409,8 +1409,8 @@ export default function CampaignDetailPage() {
                     onClick={() => setPledgeSortMode("recent")}
                     className={`px-2 py-1 rounded ${
                       pledgeSortMode === "recent"
-                        ? "bg-zinc-200 dark:bg-zinc-700 font-medium"
-                        : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                        ? "bg-line font-medium"
+                        : "text-ink-3 hover:text-zinc-700 dark:hover:text-zinc-300"
                     }`}
                   >
                     Recent
@@ -1419,8 +1419,8 @@ export default function CampaignDetailPage() {
                     onClick={() => setPledgeSortMode("amount")}
                     className={`px-2 py-1 rounded ${
                       pledgeSortMode === "amount"
-                        ? "bg-zinc-200 dark:bg-zinc-700 font-medium"
-                        : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                        ? "bg-line font-medium"
+                        : "text-ink-3 hover:text-zinc-700 dark:hover:text-zinc-300"
                     }`}
                   >
                     Amount
@@ -1430,8 +1430,12 @@ export default function CampaignDetailPage() {
             </div>
 
             {pledges.length === 0 ? (
-              <p className="text-zinc-500 text-center py-4">
-                No pledges yet. Be the first to support this campaign!
+              <p className="text-ink-3 text-center py-4">
+                {canPledge
+                  ? "No pledges yet. Be the first to support this campaign."
+                  : BigInt(campaign.totalPledged) > BigInt(0)
+                    ? "Every pledge has been settled."
+                    : "This campaign received no pledges."}
               </p>
             ) : (
               <div className="space-y-3">
@@ -1442,7 +1446,7 @@ export default function CampaignDetailPage() {
                   return (
                     <div
                       key={pledge.pledgeId}
-                      className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-900 rounded-lg"
+                      className="flex items-center justify-between p-3 bg-surface-2 rounded-lg"
                     >
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
@@ -1453,7 +1457,7 @@ export default function CampaignDetailPage() {
                             {getPledgeDistributionLabel("locked")}
                           </span>
                         </div>
-                        <p className="text-xs text-zinc-500">
+                        <p className="text-xs text-ink-3">
                           Block #{pledge.createdAt}
                           {currentBlock !== null && (
                             <span className="ml-1">
@@ -1463,7 +1467,7 @@ export default function CampaignDetailPage() {
                         </p>
                         {receipt && (
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-zinc-500">
+                            <span className="text-xs text-ink-3">
                               Receipt: {shannonsToCKB(receipt.pledgeAmount)} CKB
                             </span>
                             {EXPLORER_URL && (

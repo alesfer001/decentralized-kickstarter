@@ -87,7 +87,7 @@ export function IndexerStatusBadge({ phase }: IndexerStatusBadgeProps) {
   return (
     <div className="flex items-center gap-2">
       <div className={`w-2 h-2 rounded-full ${badge.dot}`} />
-      <span className="text-sm text-zinc-600 dark:text-zinc-400">Indexer: {badge.label}</span>
+      <span className="text-sm text-ink-2">Indexer: {badge.label}</span>
     </div>
   );
 }
