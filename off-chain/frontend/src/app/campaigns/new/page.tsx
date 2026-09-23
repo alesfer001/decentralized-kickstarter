@@ -3,14 +3,16 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ccc } from "@ckb-ccc/connector-react";
-import { ckbToShannons, datetimeToBlockNumber } from "@/lib/utils";
-import { CONTRACTS, CAMPAIGN_DATA_SIZE } from "@/lib/constants";
+import { ckbToShannons, datetimeToBlockNumber, toDatetimeLocal } from "@/lib/utils";
+import { CONTRACTS, CAMPAIGN_DATA_SIZE, MIN_DEADLINE_HOURS } from "@/lib/constants";
 import { u64ToHexLE, serializeMetadataHex, campaignTypeArgs } from "@/lib/serialization";
 import { useDevnet } from "@/components/DevnetContext";
 import { useToast } from "@/components/Toast";
 import { fetchBlockNumber, fetchCampaign } from "@/lib/api";
 import { IndexerPhase } from "@/lib/types";
 import { useIndexerReady, IndexerWaitNotice } from "@/components/IndexerStatus";
+
+const MIN_DEADLINE_LABEL = `${MIN_DEADLINE_HOURS} hour${MIN_DEADLINE_HOURS !== 1 ? "s" : ""}`;
 
 export default function CreateCampaignPage() {
   const router = useRouter();
@@ -27,6 +29,9 @@ export default function CreateCampaignPage() {
   const [deadlineDateTime, setDeadlineDateTime] = useState("");
   const [loading, setLoading] = useState(false);
   const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
+  // Browser-only values, set after mount so the server render matches the first client render
+  const [timeZone, setTimeZone] = useState<string | null>(null);
+  const [minDeadline, setMinDeadline] = useState<string | undefined>(undefined);
 
   // Field-level validation errors
   const [titleError, setTitleError] = useState<string | null>(null);
@@ -35,6 +40,11 @@ export default function CreateCampaignPage() {
 
   const { phase: indexerPhase, elapsedSeconds, retry: retryIndexer } = useIndexerReady();
   const indexerUp = indexerPhase === IndexerPhase.Ready || indexerPhase === IndexerPhase.Syncing;
+
+  useEffect(() => {
+    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    setMinDeadline(toDatetimeLocal(new Date(Date.now() + MIN_DEADLINE_HOURS * 3600 * 1000)));
+  }, []);
 
   // Fetch current block once the indexer answers (the tip comes from the node, so a sync in progress is fine)
   useEffect(() => {
@@ -77,15 +87,16 @@ export default function CreateCampaignPage() {
       return false;
     }
 
-    const targetDate = new Date(deadlineDateTime + "Z");
+    // datetime-local values carry no offset, so this parses them as the user's local time
+    const targetDate = new Date(deadlineDateTime);
     if (isNaN(targetDate.getTime())) {
       setDeadlineError("Invalid date/time format");
       return false;
     }
 
-    const minDateTime = new Date(Date.now() + 3600 * 1000); // 1 hour from now
+    const minDateTime = new Date(Date.now() + MIN_DEADLINE_HOURS * 3600 * 1000);
     if (targetDate < minDateTime) {
-      setDeadlineError("Deadline must be at least 1 hour in the future");
+      setDeadlineError(`Deadline must be at least ${MIN_DEADLINE_LABEL} from now`);
       return false;
     }
 
@@ -380,6 +391,7 @@ export default function CreateCampaignPage() {
             type="datetime-local"
             id="deadlineDateTime"
             value={deadlineDateTime}
+            min={minDeadline}
             onChange={(e) => {
               setDeadlineDateTime(e.target.value);
               if (deadlineError) setDeadlineError(null);
@@ -397,7 +409,10 @@ export default function CreateCampaignPage() {
               <p className="text-sm text-red-600 dark:text-red-400">{deadlineError}</p>
             ) : (
               <div className="text-sm text-zinc-500 space-y-1">
-                <p>Select when the campaign ends</p>
+                <p>
+                  When the campaign ends, in your local time{timeZone ? ` (${timeZone})` : ""}.
+                  At least {MIN_DEADLINE_LABEL} from now.
+                </p>
                 {currentBlock !== null && deadlineDateTime && (
                   <p className="text-xs text-zinc-400">
                     Current block: #{currentBlock.toLocaleString()}.

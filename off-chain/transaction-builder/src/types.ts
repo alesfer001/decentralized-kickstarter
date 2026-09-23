@@ -88,8 +88,8 @@ export interface ReleasePledgeParams {
  * Parameters for destroying a finalized campaign (reclaim CKB capacity)
  */
 export interface DestroyCampaignParams {
+  /** Out point of the live, finalized campaign cell; its capacity and deadline are read from chain */
   campaignOutPoint: { txHash: string; index: number };
-  campaignCapacity: bigint;
 }
 
 /**

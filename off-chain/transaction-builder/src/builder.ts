@@ -9,6 +9,9 @@ const CAMPAIGN_TYPE_ARGS_SIZE = 64;
 /** Smallest pledge the campaign contract accepts (100 CKB), mirrored so callers get a clear error */
 const MIN_PLEDGE_AMOUNT = BigInt(100) * BigInt(100000000);
 
+/** Blocks past the deadline before a finalized campaign may be destroyed; matches the campaign contract */
+const GRACE_PERIOD_BLOCKS = BigInt(1_944_000);
+
 /** How many times a pledge is retried when another pledge wins the race for the campaign cell */
 const PLEDGE_CONTENTION_RETRIES = 4;
 
@@ -479,45 +482,37 @@ export class TransactionBuilder {
   /**
    * Destroy a finalized campaign cell (reclaim CKB capacity)
    * Consumes the campaign cell, creates a plain output (no type script) back to the creator.
+   * Only valid once the grace period past the deadline has elapsed (~180 days); before that
+   * the node rejects the since as immature.
    */
   async destroyCampaign(signer: ccc.Signer, params: DestroyCampaignParams): Promise<string> {
     console.log("Building destroy campaign transaction...");
 
-    // Get the creator's lock script
+    const campaignCell = await this.client.getCell(params.campaignOutPoint);
+    if (!campaignCell) {
+      throw new Error(`No campaign cell at ${params.campaignOutPoint.txHash}:${params.campaignOutPoint.index}`);
+    }
+    // deadline_block sits after creator_lock_hash (32) + funding_goal (8)
+    const deadlineBlock = ccc.numLeFromBytes(ccc.bytesFrom(campaignCell.outputData).slice(40, 48));
+
     const address = await signer.getRecommendedAddress();
     const lockScript = (await ccc.Address.fromString(address, this.client)).script;
 
-    // Build the transaction: consume campaign cell, return CKB to creator (no type script)
+    // The campaign-lock needs since >= deadline and the campaign type script needs
+    // since >= deadline + grace period, so one since satisfies both. The whole capacity goes
+    // back to the creator, less the fee, which the type script allows up to 1 CKB.
     const tx = ccc.Transaction.from({
-      inputs: [
-        {
-          previousOutput: {
-            txHash: params.campaignOutPoint.txHash,
-            index: params.campaignOutPoint.index,
-          },
-        },
-      ],
-      outputs: [
-        {
-          capacity: params.campaignCapacity,
-          lock: lockScript,
-          // No type script — plain CKB cell
-        },
-      ],
+      inputs: [{ previousOutput: campaignCell.outPoint, since: deadlineBlock + GRACE_PERIOD_BLOCKS }],
+      outputs: [{ capacity: campaignCell.cellOutput.capacity, lock: lockScript }],
       outputsData: ["0x"],
-      cellDeps: [
-        {
-          outPoint: {
-            txHash: this.campaignContract.txHash,
-            index: this.campaignContract.index,
-          },
-          depType: "code",
-        },
-      ],
+      cellDeps: [this.campaignContract, this.campaignLockContract].map((c) => ({
+        outPoint: { txHash: c.txHash, index: c.index },
+        depType: "code" as const,
+      })),
     });
+    tx.witnesses.push("0x");
 
-    // Complete fee
-    await tx.completeFeeBy(signer, 1000);
+    await tx.completeFeeChangeToOutput(signer, 0, 1000);
 
     console.log("Signing destroy transaction...");
     const txHash = await signer.sendTransaction(tx);

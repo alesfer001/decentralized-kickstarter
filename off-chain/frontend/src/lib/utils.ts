@@ -1,5 +1,5 @@
 import { CampaignStatus, Pledge, PledgeDistributionStatus } from "./types";
-import { PLEDGE_CELL_OVERHEAD, RECEIPT_CELL_CAPACITY } from "./constants";
+import { PLEDGE_CELL_OVERHEAD, RECEIPT_CELL_CAPACITY, SECONDS_PER_BLOCK } from "./constants";
 
 /**
  * Convert shannons to CKB (1 CKB = 10^8 shannons)
@@ -108,11 +108,11 @@ export function getEffectiveStatusColor(effectiveStatus: string): string {
 }
 
 /**
- * Convert remaining blocks to a human-readable time estimate (~10s/block)
+ * Convert remaining blocks to a human-readable time estimate
  */
 export function blocksToTimeEstimate(blocksRemaining: bigint): string {
   if (blocksRemaining <= 0n) return "Expired";
-  const totalSeconds = Number(blocksRemaining) * 10;
+  const totalSeconds = Number(blocksRemaining) * SECONDS_PER_BLOCK;
   if (totalSeconds < 60) return `~${totalSeconds}s`;
   const minutes = Math.floor(totalSeconds / 60);
   if (minutes < 60) return `~${minutes}m`;
@@ -129,7 +129,7 @@ export function blockToRelativeTime(blockNumber: string, currentBlock: bigint): 
   const block = BigInt(blockNumber);
   const diff = currentBlock - block;
   if (diff <= 0n) return "just now";
-  const totalSeconds = Number(diff) * 10;
+  const totalSeconds = Number(diff) * SECONDS_PER_BLOCK;
   if (totalSeconds < 60) return `~${totalSeconds}s ago`;
   const minutes = Math.floor(totalSeconds / 60);
   if (minutes < 60) return `~${minutes}m ago`;
@@ -286,37 +286,40 @@ export function formatCost(shannons: bigint): string {
 }
 
 /**
- * Convert datetime-local picker value to estimated block number using ~10s/block rate.
- * Returns ceiling (round up blocks).
+ * Format a date as a datetime-local value (YYYY-MM-DDTHH:mm) in the browser's time zone.
+ */
+export function toDatetimeLocal(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
+/**
+ * Convert a datetime-local picker value to an estimated block number, rounding up.
+ * The picker value has no offset, so it is parsed as local time, which is what the user picked.
  */
 export function datetimeToBlockNumber(
   datetimeString: string,
   currentBlockNumber: bigint,
   currentBlockTimestampSeconds?: number
 ): bigint {
-  const targetDate = new Date(datetimeString + "Z");
-  const targetSeconds = targetDate.getTime() / 1000;
+  const targetSeconds = new Date(datetimeString).getTime() / 1000;
   const nowSeconds = currentBlockTimestampSeconds ?? Date.now() / 1000;
-  const blocksSinceNow = (targetSeconds - nowSeconds) / 10;
-  const resultBlock = currentBlockNumber + BigInt(Math.ceil(blocksSinceNow));
-
-  // Enforce minimum 1 hour (360 blocks) in the future
-  const minBlock = currentBlockNumber + 360n;
-  return resultBlock < minBlock ? minBlock : resultBlock;
+  const blocksSinceNow = (targetSeconds - nowSeconds) / SECONDS_PER_BLOCK;
+  return currentBlockNumber + BigInt(Math.ceil(blocksSinceNow));
 }
 
 /**
- * Convert block number to datetime-local format string (YYYY-MM-DDTHH:mm).
+ * Estimate when a block will be (or was) mined, from the current block and wall clock.
  */
-export function blockNumberToDatetime(
+export function blockNumberToDate(
   blockNumber: bigint,
   currentBlockNumber: bigint,
   currentBlockTimestampSeconds?: number
-): string {
-  const blocksDiff = Number(blockNumber - currentBlockNumber);
-  const secondsDiff = blocksDiff * 10;
+): Date {
+  const secondsDiff = Number(blockNumber - currentBlockNumber) * SECONDS_PER_BLOCK;
   const nowSeconds = currentBlockTimestampSeconds ?? Date.now() / 1000;
-  const targetSeconds = nowSeconds + secondsDiff;
-  const date = new Date(targetSeconds * 1000);
-  return date.toISOString().slice(0, 16);
+  return new Date((nowSeconds + secondsDiff) * 1000);
 }
