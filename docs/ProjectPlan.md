@@ -1694,13 +1694,37 @@ The `[DIS]` (topic 10609) finished at 16 of the 30 likes needed in its week and 
 
 **New order of work:**
 1. ~~Finish Phase 8 on testnet: contract redeploy, frontend pledge-contention retry.~~ Done 2026-09-17, see the entries below.
-2. Productisation: CrowdCell rebrand, a proper landing page (**Cellgrid** direction chosen 2026-09-10 from three Fable mockups: CKB cells as the visual system, cell-meter on `CampaignCard`, animated canvas grid behind the hero (kept, not trimmed), settlement diagram, "who can do what" permission matrix. Fixes before building: the matrix must show creators *can* pledge, anyone can finalize when the status verifies, and the grace-period fail-safe is open to anyone after the grace period; drop the stale "65 B header" line; no em dashes or arrows in copy. Mockups in `docs/design/landing/` (local, `docs/` is gitignored). **Poster** direction kept there as the pivot option if the audience shifts to general backers, e.g. after RGB++), creator and backer dashboards, an indexer cold-start experience that says it is waking up instead of "Offline", and the UX gaps from the Phase 8 browser run (deadline timezone bug, silent 1-hour minimum deadline, "Destroy Campaign" button shown ~180 days before it can succeed). Final feature list pending Neon's answer on what felt missing.
+2. Productisation (rebrand, landing page and UX gaps done 2026-09-23, see below; dashboards still open): CrowdCell rebrand, a proper landing page (**Cellgrid** direction chosen 2026-09-10 from three Fable mockups: CKB cells as the visual system, cell-meter on `CampaignCard`, animated canvas grid behind the hero (kept, not trimmed), settlement diagram, "who can do what" permission matrix. Fixes before building: the matrix must show creators *can* pledge, anyone can finalize when the status verifies, and the grace-period fail-safe is open to anyone after the grace period; drop the stale "65 B header" line; no em dashes or arrows in copy. Mockups in `docs/design/landing/` (local, `docs/` is gitignored). **Poster** direction kept there as the pivot option if the audience shifts to general backers, e.g. after RGB++), creator and backer dashboards, an indexer cold-start experience that says it is waking up instead of "Offline", and the UX gaps from the Phase 8 browser run (deadline timezone bug, silent 1-hour minimum deadline, "Destroy Campaign" button shown ~180 days before it can succeed). Final feature list pending Neon's answer on what felt missing.
 3. Rewrite `docs/grant/PROPOSAL.md` for the $5k testnet scope and post the new `[DIS]`.
 4. Later proposal: fee enforcement, config cell, multisig treasury, Scalebit audit, mainnet launch.
 
-**2026-09-17 — Where to pick up**
+**2026-09-23 — Where to pick up**
 
 State at end of session:
+- CrowdCell rebrand and landing page live on Vercel (PR #6 `1f186de`), together with the deadline and Destroy fixes (PR #5 `f4bbc89`). Landing at `/`, the product at `/app`; campaign detail and create URLs unchanged.
+- DIS "ready" checklist (target Mon 2026-10-05): items 1, 2 and 3 done. Open: item 4 (rewrite `docs/grant/PROPOSAL.md` for $5k, line-item budget, milestones, bilingual title) and item 5 (line up ~20-25 likes, project-thread update a few days before, ending with "proposal coming Monday").
+- Week 29 progress report published; September has 4 reports (the $300 max).
+
+Next session, in order:
+1. Seed 3-4 realistic demo campaigns on testnet, so the app is not just the three "v1.2 testnet E2E" runs when the thread update goes out.
+2. Fix "Backers 0" on released campaigns: the indexer counts live pledges only, so a campaign drops to 0 backers once it pays out. Count from receipts or pledge history instead.
+3. Proposal rewrite and likes outreach (items 4-5), ~09-28 to 10-02. The thread update can now show the new site.
+
+Loose ends:
+- Rebrand beyond the frontend: domain and trademark check on "CrowdCell", then rename the GitHub repo, Render service and Vercel project (the live URL still says decentralized-kickstarter), and update Nervos Talk and CKBuilder Projects.
+- `off-chain/frontend/.env.vercel` still points at the old ngrok indexer URL. Not used by deploys, but misleading.
+- Still open from 09-17: Officeyutong review of PR #2, rotating the testnet `BOT_PRIVATE_KEY` on Render.
+- Lint has 3 errors already on `main` before this work (setState in effects in `DevnetContext.tsx` and `Header.tsx`, an `any` in the campaign page).
+
+**2026-09-23:** UX fixes, CrowdCell rebrand and landing page (DIS checklist items 2 and 3)
+
+- **Deadlines were landing ~6 days early on a 30-day campaign.** The create form parsed the picker's local time as UTC and converted at 10 s/block, while testnet averages 8.0 s (measured over 300k blocks). Now local time and one `SECONDS_PER_BLOCK = 8` constant, which also fixes the "time left" labels. The 1-hour minimum is stated on the form and set as the picker's `min` instead of clamping silently. PR #5.
+- **Destroy Campaign** is only offered after deadline + grace period (1,944,000 blocks), with the block and date shown before that. The destroy tx itself could never have succeeded (no `since`, no campaign-lock dep, v1.0 capacity formula); fixed in the frontend and `TransactionBuilder.destroyCampaign`. Not exercised on chain: the grace period is unreachable on testnet and no devnet run was done. PR #5.
+- **CrowdCell rebrand and Cellgrid landing page.** Wordmark and icon, Unbounded/Manrope/JetBrains Mono, light/dark tokens (blue = the cell, amber = the funds). After reviewing lido.fi, hyperfoundation.org and aave.com, the landing is marketing only and the product moved to `/app` behind "Launch app": hero with the animated grid and a protocol facts strip, React Flow settlement diagram (including the fail-safe path), permission table checked against the contracts, open-and-verifiable cards, creators band, roadmap, FAQ. PR #6.
+- **Copy audit.** The mockup's fail-safe copy was wrong (it credited the receipt; the pledge lock refunds unsettled pledges to their backer after the grace period, triggerable by anyone). Status names unified to Funded / Unsuccessful / Ended, stale "v1.1" text removed, settled campaigns no longer say "No pledges yet".
+- **Decided:** no mention of the CKB core developer review on the site; an audit line goes in once the independent audit is done. Live stats, track record, ecosystem logos and a featured-campaigns teaser are deferred until there are numbers worth showing (list in `docs/design/landing/NOTES.md`).
+
+**2026-09-17:** State at end of session
 - v1.2 Phase 8 plus the fund-routing fixes are merged to `main` (PR #2 `c64db86`, PR #3 `13c1f01`), deployed on testnet, and live on Vercel and Render. End-to-end verified on testnet with script wallets and a JoyID wallet (entries below).
 - DIS "ready" checklist (target Mon 2026-10-05): item 1 (Phase 8 live on testnet + E2E) done. Item 3 partly done (pledge form wording). Open: item 2 (CrowdCell rebrand + Cellgrid landing page), item 3 (deadline timezone bug, silent 1-hour minimum deadline, "Destroy Campaign" button shown ~180 days early), item 4 (rewrite `docs/grant/PROPOSAL.md` for $5k, bilingual title), item 5 (line up ~20-25 likes, project-thread update a few days before).
 
