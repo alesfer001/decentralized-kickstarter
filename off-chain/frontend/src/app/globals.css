@@ -1,26 +1,129 @@
 @import "tailwindcss";
 
+/*
+ * CrowdCell design tokens. Two accents with fixed meanings:
+ * --cell (blue) is the container, --fund (amber) is the money inside it.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --surface: #f3f5f9;
+  --surface-2: #ffffff;
+  --surface-3: #e9edf5;
+  --ink: #0e1522;
+  --ink-2: #4b5568;
+  --ink-3: #7b8599;
+  --line: #d5dbe7;
+  --line-2: #e6eaf2;
+  --cell: #1f55e0;
+  --cell-soft: rgba(31, 85, 224, 0.1);
+  --fund: #c77a00;
+  --fund-ink: #ffffff;
+  --fund-soft: rgba(199, 122, 0, 0.12);
+  --ok: #148a58;
+  --ok-soft: rgba(20, 138, 88, 0.12);
+  --bad: #c93d30;
+  --bad-soft: rgba(201, 61, 48, 0.12);
+  --warn: #a06a00;
+  --grid-dot: rgba(14, 21, 34, 0.1);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    --surface: #0c1119;
+    --surface-2: #121926;
+    --surface-3: #1a2334;
+    --ink: #eef2f8;
+    --ink-2: #a5b0c2;
+    --ink-3: #6e7a8f;
+    --line: #243044;
+    --line-2: #1b2436;
+    --cell: #2e6bff;
+    --cell-soft: rgba(46, 107, 255, 0.16);
+    --fund: #ffb020;
+    --fund-ink: #1a1200;
+    --fund-soft: rgba(255, 176, 32, 0.14);
+    --ok: #35d08e;
+    --ok-soft: rgba(53, 208, 142, 0.14);
+    --bad: #ff6b5e;
+    --bad-soft: rgba(255, 107, 94, 0.14);
+    --warn: #ffb020;
+    --grid-dot: rgba(165, 176, 194, 0.14);
   }
 }
 
+:root[data-theme="dark"] {
+  --surface: #0c1119;
+  --surface-2: #121926;
+  --surface-3: #1a2334;
+  --ink: #eef2f8;
+  --ink-2: #a5b0c2;
+  --ink-3: #6e7a8f;
+  --line: #243044;
+  --line-2: #1b2436;
+  --cell: #2e6bff;
+  --cell-soft: rgba(46, 107, 255, 0.16);
+  --fund: #ffb020;
+  --fund-ink: #1a1200;
+  --fund-soft: rgba(255, 176, 32, 0.14);
+  --ok: #35d08e;
+  --ok-soft: rgba(53, 208, 142, 0.14);
+  --bad: #ff6b5e;
+  --bad-soft: rgba(255, 107, 94, 0.14);
+  --warn: #ffb020;
+  --grid-dot: rgba(165, 176, 194, 0.14);
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-cell: var(--cell);
+  --color-cell-soft: var(--cell-soft);
+  --color-fund: var(--fund);
+  --color-fund-ink: var(--fund-ink);
+  --color-fund-soft: var(--fund-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-warn: var(--warn);
+  --font-sans: var(--font-manrope), "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, Menlo, monospace;
+  --font-display: var(--font-unbounded), "Arial Black", sans-serif;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+html {
+  scroll-behavior: smooth;
+  /* Keeps anchor targets clear of the sticky header */
+  scroll-padding-top: 72px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--fund);
+  outline-offset: 3px;
+}
+
+/* Section eyebrow: small mono caps above a heading */
+.eyebrow {
+  font-family: var(--font-jetbrains-mono), ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }

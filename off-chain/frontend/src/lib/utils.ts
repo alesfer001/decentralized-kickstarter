@@ -75,9 +75,9 @@ export function getEffectiveStatusLabel(effectiveStatus: string): string {
     case "active":
       return "Active";
     case "expired_success":
-      return "Expired - Funded";
+      return "Ended · Funded";
     case "expired_failed":
-      return "Expired - Needs Finalization";
+      return "Ended · Not funded";
     case "success":
       return "Funded";
     case "failed":
@@ -93,17 +93,16 @@ export function getEffectiveStatusLabel(effectiveStatus: string): string {
 export function getEffectiveStatusColor(effectiveStatus: string): string {
   switch (effectiveStatus) {
     case "active":
-      return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
+      return "bg-cell-soft text-cell";
     case "expired_success":
-      return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
     case "expired_failed":
-      return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200";
+      return "bg-fund-soft text-warn";
     case "success":
-      return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
+      return "bg-ok-soft text-ok";
     case "failed":
-      return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
+      return "bg-bad-soft text-bad";
     default:
-      return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
+      return "bg-surface-3 text-ink-2";
   }
 }
 

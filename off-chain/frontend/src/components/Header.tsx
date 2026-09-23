@@ -2,30 +2,35 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ccc } from "@ckb-ccc/connector-react";
 import { formatHash, shannonsToCKB } from "@/lib/utils";
 import { useDevnet } from "./DevnetContext";
+import { LogoMark } from "./Logo";
 
-// Tailwind safelist (ensures dynamic classes are not purged):
-// bg-orange-500/20 text-orange-400 border-orange-500/30
-// bg-blue-500/20 text-blue-400 border-blue-500/30
-// bg-green-500/20 text-green-400 border-green-500/30
-const NETWORK_BADGE: Record<string, { label: string; classes: string }> = {
-  devnet: {
-    label: "Devnet",
-    classes: "bg-orange-500/20 text-orange-400 border-orange-500/30",
-  },
-  testnet: {
-    label: "Testnet",
-    classes: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  },
-  mainnet: {
-    label: "Mainnet",
-    classes: "bg-green-500/20 text-green-400 border-green-500/30",
-  },
+// Network pill dot colours; the Tailwind classes are written out in full so they are not purged
+const NETWORK_BADGE: Record<string, { label: string; dot: string }> = {
+  devnet: { label: "devnet", dot: "bg-fund" },
+  testnet: { label: "testnet", dot: "bg-cell" },
+  mainnet: { label: "mainnet", dot: "bg-ok" },
 };
 
+const NAV_LINK = "text-sm font-medium text-ink-2 hover:text-ink transition-colors";
+
+/** The landing page links to its own sections; the app links to its pages */
+const LANDING_NAV = [
+  { href: "#how", label: "How it works" },
+  { href: "#trust", label: "Trust model" },
+  { href: "#roadmap", label: "Roadmap" },
+  { href: "#faq", label: "FAQ" },
+];
+const APP_NAV = [
+  { href: "/app", label: "Campaigns" },
+  { href: "/campaigns/new", label: "Create" },
+];
+
 export function Header() {
+  const isLanding = usePathname() === "/";
   const { wallet, open, disconnect } = ccc.useCcc();
   const walletSigner = ccc.useSigner();
   const { network, isDevnet, devnetSigner, devnetAddress, activeAccountIndex, switchAccount, accounts } = useDevnet();
@@ -76,42 +81,54 @@ export function Header() {
   const badge = NETWORK_BADGE[network];
 
   return (
-    <header className="border-b border-zinc-200 dark:border-zinc-800">
-      <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-3 sm:gap-8">
-          <Link href="/" className="text-lg sm:text-xl font-bold whitespace-nowrap">
-            CKB Kickstarter
+    <header className="sticky top-0 z-20 border-b border-line-2 bg-surface/85 backdrop-blur-md">
+      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-4 sm:gap-8">
+          <Link
+            href="/"
+            aria-label="CrowdCell home"
+            className="flex items-center gap-2.5 font-display font-medium text-[15px] tracking-wide whitespace-nowrap"
+          >
+            <LogoMark />
+            CROWDCELL
           </Link>
-          <nav className="flex items-center gap-3 sm:gap-6">
-            <Link
-              href="/"
-              className="text-sm sm:text-base text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-            >
-              Campaigns
-            </Link>
-            <Link
-              href="/campaigns/new"
-              className="text-sm sm:text-base text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-            >
-              Create
-            </Link>
+          <nav className="flex items-center gap-4 sm:gap-5">
+            {isLanding
+              ? LANDING_NAV.map((item) => (
+                  <a key={item.href} href={item.href} className={`${NAV_LINK} hidden md:inline`}>
+                    {item.label}
+                  </a>
+                ))
+              : APP_NAV.map((item) => (
+                  <Link key={item.href} href={item.href} className={NAV_LINK}>
+                    {item.label}
+                  </Link>
+                ))}
           </nav>
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
           {badge && (
-            <span className={`px-2 py-1 text-xs font-medium rounded border ${badge.classes}`}>
+            <span className="font-mono text-[11px] px-2.5 py-1 rounded-full border border-line text-ink-2 inline-flex items-center gap-1.5">
+              <i className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
               {badge.label}
             </span>
           )}
-          {isConnected && address ? (
-            <div className="flex items-center gap-2 sm:gap-4">
+          {isLanding ? (
+            <Link
+              href="/app"
+              className="inline-flex items-center px-4 py-2 text-sm font-semibold rounded-lg bg-fund text-fund-ink hover:brightness-105 min-h-[44px]"
+            >
+              Launch app
+            </Link>
+          ) : isConnected && address ? (
+            <div className="flex items-center gap-2 sm:gap-3">
               {/* Account switcher for devnet */}
               {isDevnet && (
                 <select
                   value={activeAccountIndex}
                   onChange={(e) => switchAccount(parseInt(e.target.value))}
-                  className="text-xs px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 focus:outline-none min-h-[32px]"
+                  className="text-xs px-2 py-1 rounded-lg border border-line bg-surface-2 focus:outline-none min-h-[32px]"
                 >
                   {accounts.map((acc, i) => (
                     <option key={i} value={i}>
@@ -121,11 +138,11 @@ export function Header() {
                 </select>
               )}
               <div className="text-right">
-                <span className="text-sm font-mono text-zinc-600 dark:text-zinc-400 block">
+                <span className="text-sm font-mono text-ink-2 block">
                   {formatHash(address, 6)}
                 </span>
                 {balance !== null && (
-                  <span className="text-xs text-zinc-500">
+                  <span className="text-xs font-mono text-ink-3">
                     {balance} CKB
                   </span>
                 )}
@@ -133,7 +150,7 @@ export function Header() {
               {!isDevnet && (
                 <button
                   onClick={disconnect}
-                  className="px-4 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 min-h-[44px]"
+                  className="px-4 py-2 text-sm font-semibold rounded-lg border border-line hover:bg-surface-3 min-h-[44px]"
                 >
                   Disconnect
                 </button>
@@ -142,9 +159,9 @@ export function Header() {
           ) : !isDevnet ? (
             <button
               onClick={open}
-              className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 min-h-[44px]"
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-fund text-fund-ink hover:brightness-105 min-h-[44px]"
             >
-              Connect Wallet
+              Connect wallet
             </button>
           ) : null}
         </div>

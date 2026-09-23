@@ -3,14 +3,14 @@
 export function SkeletonLine({ className = "" }: { className?: string }) {
   return (
     <div
-      className={`animate-pulse bg-zinc-200 dark:bg-zinc-800 rounded ${className}`}
+      className={`animate-pulse bg-line-2 rounded ${className}`}
     />
   );
 }
 
 export function SkeletonCard() {
   return (
-    <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 sm:p-6">
+    <div className="border border-line rounded-lg p-4 sm:p-6">
       <div className="flex items-start justify-between mb-4">
         <div className="flex-1">
           <SkeletonLine className="h-5 w-3/4 mb-2" />
@@ -36,7 +36,7 @@ export function SkeletonCard() {
           <SkeletonLine className="h-3 w-20" />
           <SkeletonLine className="h-3 w-20" />
         </div>
-        <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+        <div className="pt-2 border-t border-line-2">
           <SkeletonLine className="h-3 w-40" />
         </div>
       </div>
@@ -51,7 +51,7 @@ export function SkeletonDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left content */}
         <div className="lg:col-span-2 space-y-6">
-          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
+          <div className="border border-line rounded-lg p-6">
             <div className="flex items-start justify-between mb-4">
               <SkeletonLine className="h-7 w-2/3" />
               <SkeletonLine className="h-6 w-20 rounded-full" />
@@ -61,11 +61,11 @@ export function SkeletonDetailPage() {
             <div className="space-y-4">
               <SkeletonLine className="h-3 w-full rounded-full" />
               <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-zinc-50 dark:bg-zinc-900 rounded-lg">
+                <div className="p-4 bg-surface-2 rounded-lg">
                   <SkeletonLine className="h-3 w-16 mb-2" />
                   <SkeletonLine className="h-7 w-24" />
                 </div>
-                <div className="p-4 bg-zinc-50 dark:bg-zinc-900 rounded-lg">
+                <div className="p-4 bg-surface-2 rounded-lg">
                   <SkeletonLine className="h-3 w-12 mb-2" />
                   <SkeletonLine className="h-7 w-24" />
                 </div>
@@ -83,13 +83,13 @@ export function SkeletonDetailPage() {
             </div>
           </div>
           {/* Pledges skeleton */}
-          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
+          <div className="border border-line rounded-lg p-6">
             <SkeletonLine className="h-5 w-32 mb-4" />
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
                 <div
                   key={i}
-                  className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-900 rounded-lg"
+                  className="flex items-center justify-between p-3 bg-surface-2 rounded-lg"
                 >
                   <div>
                     <SkeletonLine className="h-4 w-32 mb-1" />
@@ -103,7 +103,7 @@ export function SkeletonDetailPage() {
         </div>
         {/* Right sidebar */}
         <div className="lg:col-span-1">
-          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
+          <div className="border border-line rounded-lg p-6">
             <SkeletonLine className="h-5 w-32 mb-4" />
             <SkeletonLine className="h-10 w-full mb-4 rounded-lg" />
             <SkeletonLine className="h-11 w-full rounded-lg" />

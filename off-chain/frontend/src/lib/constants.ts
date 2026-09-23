@@ -1,5 +1,5 @@
 /**
- * Network configuration for CKB Kickstarter
+ * Network configuration for CrowdCell
  *
  * Controlled by NEXT_PUBLIC_NETWORK env var: "devnet" | "testnet" | "mainnet"
  * Defaults to "devnet" for backward compatibility.
@@ -208,3 +208,8 @@ export const DEVNET_ACCOUNTS = IS_DEVNET
       },
     ]
   : [];
+
+/**
+ * Public source repository
+ */
+export const REPO_URL = "https://github.com/alesfer001/decentralized-kickstarter";

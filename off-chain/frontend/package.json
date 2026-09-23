@@ -11,6 +11,7 @@
   "dependencies": {
     "@ckb-ccc/connector-react": "^1.0.30",
     "@ckb-ccc/core": "^1.12.2",
+    "@xyflow/react": "^12.11.6",
     "next": "16.0.7",
     "react": "19.2.0",
     "react-dom": "19.2.0"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { ccc } from "@ckb-ccc/connector-react";
 import { ckbToShannons, datetimeToBlockNumber, toDatetimeLocal } from "@/lib/utils";
@@ -11,6 +11,15 @@ import { useToast } from "@/components/Toast";
 import { fetchBlockNumber, fetchCampaign } from "@/lib/api";
 import { IndexerPhase } from "@/lib/types";
 import { useIndexerReady, IndexerWaitNotice } from "@/components/IndexerStatus";
+
+/** The browser's time zone; null during the server render, which cannot know it */
+function useTimeZone(): string | null {
+  return useSyncExternalStore(
+    () => () => {},
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+    () => null
+  );
+}
 
 const MIN_DEADLINE_LABEL = `${MIN_DEADLINE_HOURS} hour${MIN_DEADLINE_HOURS !== 1 ? "s" : ""}`;
 
@@ -29,8 +38,8 @@ export default function CreateCampaignPage() {
   const [deadlineDateTime, setDeadlineDateTime] = useState("");
   const [loading, setLoading] = useState(false);
   const [currentBlock, setCurrentBlock] = useState<bigint | null>(null);
-  // Browser-only values, set after mount so the server render matches the first client render
-  const [timeZone, setTimeZone] = useState<string | null>(null);
+  const timeZone = useTimeZone();
+  // Set when the picker gains focus, so it is never stale and never differs between server and client
   const [minDeadline, setMinDeadline] = useState<string | undefined>(undefined);
 
   // Field-level validation errors
@@ -40,11 +49,6 @@ export default function CreateCampaignPage() {
 
   const { phase: indexerPhase, elapsedSeconds, retry: retryIndexer } = useIndexerReady();
   const indexerUp = indexerPhase === IndexerPhase.Ready || indexerPhase === IndexerPhase.Syncing;
-
-  useEffect(() => {
-    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    setMinDeadline(toDatetimeLocal(new Date(Date.now() + MIN_DEADLINE_HOURS * 3600 * 1000)));
-  }, []);
 
   // Fetch current block once the indexer answers (the tip comes from the node, so a sync in progress is fine)
   useEffect(() => {
@@ -83,7 +87,7 @@ export default function CreateCampaignPage() {
       return false;
     }
     if (currentBlock === null) {
-      setDeadlineError("Unable to determine current block — please refresh");
+      setDeadlineError("Unable to read the current block. Please refresh.");
       return false;
     }
 
@@ -211,7 +215,7 @@ export default function CreateCampaignPage() {
       console.log("Sending transaction...");
       const hash = await signer.sendTransaction(tx);
       console.log("TX hash:", hash);
-      toast("success", "Campaign created successfully!");
+      toast("success", "Campaign created!");
 
       // Poll indexer until the new campaign appears, then redirect
       const newCampaignId = hash + "_0";
@@ -229,7 +233,7 @@ export default function CreateCampaignPage() {
         }
       }
       // Timeout — redirect to home
-      router.push("/");
+      router.push("/app");
     } catch (err) {
       console.error("Failed to create campaign:", err);
       const msg = err instanceof Error ? err.message : "Failed to create campaign";
@@ -249,7 +253,7 @@ export default function CreateCampaignPage() {
   return (
     <div className="max-w-lg mx-auto px-2 sm:px-0">
       <h1 className="text-3xl font-bold mb-2">Create Campaign</h1>
-      <p className="text-zinc-600 dark:text-zinc-400 mb-8">
+      <p className="text-ink-2 mb-8">
         Start a new crowdfunding campaign on CKB
       </p>
 
@@ -290,10 +294,10 @@ export default function CreateCampaignPage() {
             onBlur={validateTitle}
             placeholder="My Awesome Project"
             maxLength={200}
-            className={`w-full px-4 py-2 border rounded-lg bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            className={`w-full px-4 py-2 border rounded-lg bg-surface-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               titleError
                 ? "border-red-400 dark:border-red-600"
-                : "border-zinc-300 dark:border-zinc-700"
+                : "border-line"
             }`}
             disabled={loading}
           />
@@ -301,7 +305,7 @@ export default function CreateCampaignPage() {
             {titleError ? (
               <p className="text-sm text-red-600 dark:text-red-400">{titleError}</p>
             ) : (
-              <p className="text-sm text-zinc-500">Give your campaign a memorable name</p>
+              <p className="text-sm text-ink-3">Give your campaign a memorable name</p>
             )}
             <span
               className={`text-xs ${
@@ -329,11 +333,11 @@ export default function CreateCampaignPage() {
             placeholder="Describe your project and what you plan to achieve..."
             maxLength={2000}
             rows={4}
-            className="w-full px-4 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-vertical"
+            className="w-full px-4 py-2 border border-line rounded-lg bg-surface-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-vertical"
             disabled={loading}
           />
           <div className="flex justify-between mt-1">
-            <p className="text-sm text-zinc-500">Tell backers about your project (stored on-chain)</p>
+            <p className="text-sm text-ink-3">Tell backers about your project (stored on-chain)</p>
             <span
               className={`text-xs ${
                 descLen > 1800
@@ -365,10 +369,10 @@ export default function CreateCampaignPage() {
             placeholder="1000"
             min="100"
             step="1"
-            className={`w-full px-4 py-2 border rounded-lg bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            className={`w-full px-4 py-2 border rounded-lg bg-surface-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               goalError
                 ? "border-red-400 dark:border-red-600"
-                : "border-zinc-300 dark:border-zinc-700"
+                : "border-line"
             }`}
             disabled={loading}
           />
@@ -376,8 +380,8 @@ export default function CreateCampaignPage() {
             {goalError ? (
               <p className="text-sm text-red-600 dark:text-red-400">{goalError}</p>
             ) : (
-              <p className="text-sm text-zinc-500">
-                Minimum 100 CKB due to cell capacity requirements
+              <p className="text-sm text-ink-3">
+                Minimum 100 CKB, the same as the smallest pledge
               </p>
             )}
           </div>
@@ -392,15 +396,16 @@ export default function CreateCampaignPage() {
             id="deadlineDateTime"
             value={deadlineDateTime}
             min={minDeadline}
+            onFocus={() => setMinDeadline(toDatetimeLocal(new Date(Date.now() + MIN_DEADLINE_HOURS * 3600 * 1000)))}
             onChange={(e) => {
               setDeadlineDateTime(e.target.value);
               if (deadlineError) setDeadlineError(null);
             }}
             onBlur={validateDeadline}
-            className={`w-full px-4 py-2 border rounded-lg bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            className={`w-full px-4 py-2 border rounded-lg bg-surface-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               deadlineError
                 ? "border-red-400 dark:border-red-600"
-                : "border-zinc-300 dark:border-zinc-700"
+                : "border-line"
             }`}
             disabled={loading}
           />
@@ -408,7 +413,7 @@ export default function CreateCampaignPage() {
             {deadlineError ? (
               <p className="text-sm text-red-600 dark:text-red-400">{deadlineError}</p>
             ) : (
-              <div className="text-sm text-zinc-500 space-y-1">
+              <div className="text-sm text-ink-3 space-y-1">
                 <p>
                   When the campaign ends, in your local time{timeZone ? ` (${timeZone})` : ""}.
                   At least {MIN_DEADLINE_LABEL} from now.
